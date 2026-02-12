@@ -1,0 +1,49 @@
+{
+  "entities": [
+    {
+      "entity_type": "loan",
+      "entity_data": {
+        "$schema": "file://../models/loan.schema.v1.0.0.json",
+        "id": "LOAN-12345",
+        "loan_number": "LN-001",
+        "facility_id": "FAC-100",
+        "financial": {
+          "principal_amount": 100000,
+          "outstanding_balance": 75000,
+          "currency": "USD",
+          "interest_rate": 0.05
+        },
+        "dates": {
+          "origination_date": "2024-01-01",
+          "maturity_date": "2025-01-01"
+        },
+        "status": "active"
+      }
+    },
+    {
+      "entity_type": "loan",
+      "entity_data": {
+        "$schema": "file://../models/loan.schema.v1.0.0.json",
+        "id": "LOAN-67890",
+        "loan_number": "LN-002",
+        "facility_id": "FAC-100",
+        "financial": {
+          "principal_amount": 50000,
+          "outstanding_balance": 25000,
+          "currency": "USD",
+          "interest_rate": 0.045
+        },
+        "dates": {
+          "origination_date": "2024-02-01",
+          "maturity_date": "2025-02-01"
+        },
+        "status": "active"
+      }
+    }
+  ],
+  "id_fields": {
+    "file://../models/loan.schema.v1.0.0.json": "loan_number"
+  },
+  "ruleset_name": "quick",
+  "output_mode": "response"
+}

@@ -1,0 +1,262 @@
+# Validation Service - Test Curl Commands
+# Server: http://localhost:8080
+
+# ============================================================================
+# 1. Test Validate Endpoint - Valid Loan (should PASS all rules)
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_type": "loan",
+    "entity_data": {
+      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+      "id": "LOAN-12345",
+      "loan_number": "LN-001",
+      "facility_id": "FAC-100",
+      "financial": {
+        "principal_amount": 100000,
+        "outstanding_balance": 75000,
+        "currency": "USD",
+        "interest_rate": 0.05
+      },
+      "dates": {
+        "origination_date": "2024-01-01",
+        "maturity_date": "2025-01-01"
+      },
+      "status": "active"
+    },
+    "ruleset_name": "quick"
+  }'
+
+# ============================================================================
+# 2. Test Validate Endpoint - Invalid Loan with Negative Principal (should FAIL)
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_type": "loan",
+    "entity_data": {
+      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+      "id": "LOAN-99999",
+      "loan_number": "LN-BAD",
+      "facility_id": "FAC-999",
+      "financial": {
+        "principal_amount": -50000,
+        "outstanding_balance": 0,
+        "currency": "USD",
+        "interest_rate": 0.05
+      },
+      "dates": {
+        "origination_date": "2024-01-01",
+        "maturity_date": "2025-01-01"
+      },
+      "status": "active"
+    },
+    "ruleset_name": "quick"
+  }'
+
+# ============================================================================
+# 3. Test Validate Endpoint - Invalid Dates (maturity before origination)
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_type": "loan",
+    "entity_data": {
+      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+      "id": "LOAN-88888",
+      "loan_number": "LN-DATES",
+      "facility_id": "FAC-888",
+      "financial": {
+        "principal_amount": 100000,
+        "outstanding_balance": 75000,
+        "currency": "USD",
+        "interest_rate": 0.05
+      },
+      "dates": {
+        "origination_date": "2025-01-01",
+        "maturity_date": "2024-01-01"
+      },
+      "status": "active"
+    },
+    "ruleset_name": "quick"
+  }'
+
+# ============================================================================
+# 4. Test Discover-Rules Endpoint
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/discover-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_type": "loan",
+    "schema_url": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "ruleset_name": "quick"
+  }'
+
+# ============================================================================
+# 5. Test Batch Endpoint - Inline Entities (response mode)
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entities": [
+      {
+        "entity_type": "loan",
+        "entity_data": {
+          "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+          "id": "LOAN-12345",
+          "loan_number": "LN-001",
+          "facility_id": "FAC-100",
+          "financial": {
+            "principal_amount": 100000,
+            "outstanding_balance": 75000,
+            "currency": "USD",
+            "interest_rate": 0.05
+          },
+          "dates": {
+            "origination_date": "2024-01-01",
+            "maturity_date": "2025-01-01"
+          },
+          "status": "active"
+        }
+      },
+      {
+        "entity_type": "loan",
+        "entity_data": {
+          "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+          "id": "LOAN-67890",
+          "loan_number": "LN-002",
+          "facility_id": "FAC-100",
+          "financial": {
+            "principal_amount": 50000,
+            "outstanding_balance": 25000,
+            "currency": "USD",
+            "interest_rate": 0.045
+          },
+          "dates": {
+            "origination_date": "2024-02-01",
+            "maturity_date": "2025-02-01"
+          },
+          "status": "active"
+        }
+      }
+    ],
+    "ruleset_name": "quick",
+    "output_mode": "response"
+  }'
+
+# ============================================================================
+# 6. Test Batch Endpoint - File Output Mode
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entities": [
+      {
+        "entity_type": "loan",
+        "entity_data": {
+          "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+          "id": "LOAN-12345",
+          "loan_number": "LN-001",
+          "facility_id": "FAC-100",
+          "financial": {
+            "principal_amount": 100000,
+            "outstanding_balance": 75000,
+            "currency": "USD",
+            "interest_rate": 0.05
+          },
+          "dates": {
+            "origination_date": "2024-01-01",
+            "maturity_date": "2025-01-01"
+          },
+          "status": "active"
+        }
+      }
+    ],
+    "ruleset_name": "quick",
+    "output_mode": "file",
+    "output_path": "/tmp/batch-results.json"
+  }'
+
+# ============================================================================
+# 7. Test Batch-File Endpoint - File URI with Response Output
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/batch-file \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_uri": "file:///Users/jude/Dropbox/Projects/validation-service/jvm-service/test/test-data/loans.json",
+    "entity_type": "loan",
+    "id_field": "loan_number",
+    "ruleset_name": "thorough",
+    "output_mode": "response"
+  }'
+
+# ============================================================================
+# 8. Test Batch-File Endpoint - File Output Mode
+# ============================================================================
+
+curl -X POST http://localhost:8080/api/v1/batch-file \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_uri": "file:///Users/jude/Dropbox/Projects/validation-service/jvm-service/test/test-data/loans.json",
+    "entity_type": "loan",
+    "id_field": "loan_number",
+    "ruleset_name": "thorough",
+    "output_mode": "file",
+    "output_path": "/tmp/batch-file-results.json"
+  }'
+
+# ============================================================================
+# 9. EASIER: Use organized test request files
+# ============================================================================
+
+# Test batch inline - response mode
+curl -X POST http://localhost:8080/api/v1/batch \
+  -H "Content-Type: application/json" \
+  --data-binary @test/requests/batch-inline.json | jq .
+
+# Test batch inline - file output mode
+curl -X POST http://localhost:8080/api/v1/batch \
+  -H "Content-Type: application/json" \
+  --data-binary @test/requests/batch-inline-file-output.json | jq .
+
+# Test batch-file - response mode
+curl -X POST http://localhost:8080/api/v1/batch-file \
+  -H "Content-Type: application/json" \
+  --data-binary @test/requests/batch-file-response.json | jq .
+
+# Test batch-file - file output mode
+curl -X POST http://localhost:8080/api/v1/batch-file \
+  -H "Content-Type: application/json" \
+  --data-binary @test/requests/batch-file-file-output.json | jq .
+
+# ============================================================================
+# Check output files
+# ============================================================================
+# cat /tmp/batch-results.json | jq .
+# cat /tmp/batch-file-results.json | jq .
+# cat test/results/batch-inline-output.json | jq .
+# cat test/results/batch-file-output.json | jq .
+
+# ============================================================================
+# Pretty-print JSON responses (add | jq . to any command above)
+# ============================================================================
+# Example:
+# curl -X POST http://localhost:8080/api/v1/validate ... | jq .
+
+# ============================================================================
+# Monitor logs while testing
+# ============================================================================
+# tail -f logs/server.log
+
+# ============================================================================
+# Stop the server
+# ============================================================================
+# lsof -ti :8080 | xargs kill

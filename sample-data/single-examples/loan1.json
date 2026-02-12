@@ -1,0 +1,33 @@
+{
+  "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+  "id": "LOAN-12345",
+  "loan_number": "LN-2024-00123",
+  "facility_id": "FAC-789",
+  "client_id": "CLIENT-001",
+  "collateral_id": "COLL-555",
+  "financial": {
+    "principal_amount": 500000,
+    "outstanding_balance": 450000,
+    "currency": "USD",
+    "interest_rate": 0.05,
+    "interest_type": "fixed",
+    "fees": {
+      "origination_fee": 5000,
+      "servicing_fee": 250
+    }
+  },
+  "dates": {
+    "origination_date": "2024-01-15",
+    "maturity_date": "2029-01-15",
+    "first_payment_date": "2024-02-15",
+    "last_modified_date": "2024-03-20T14:30:00Z"
+  },
+  "status": "active",
+  "loan_type": "term",
+  "collateral_required": true,
+  "repayment_schedule": {
+    "frequency": "monthly",
+    "number_of_payments": 60
+  },
+  "notes": "Term loan for commercial real estate acquisition. Secured by first lien on property at 123 Main Street."
+}

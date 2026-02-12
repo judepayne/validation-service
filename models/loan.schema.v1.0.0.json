@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bank.example.com/schemas/loan/v1.0.0",
+  "version": "1.0.0",
+  "title": "Loan (v1.0.0)",
+  "description": "A loan instrument under a facility - Schema Version 1.0.0",
+  "type": "object",
+  "required": [
+    "id",
+    "loan_number",
+    "facility_id",
+    "financial",
+    "dates",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the loan",
+      "pattern": "^LOAN-[0-9]+$",
+      "examples": ["LOAN-12345"]
+    },
+    "loan_number": {
+      "type": "string",
+      "description": "Human-readable loan reference number",
+      "examples": ["LN-2024-00123"]
+    },
+    "facility_id": {
+      "type": "string",
+      "description": "Reference to parent facility",
+      "pattern": "^FAC-[0-9]+$",
+      "examples": ["FAC-789"]
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Reference to borrowing client",
+      "pattern": "^CLIENT-[0-9]+$",
+      "examples": ["CLIENT-001"]
+    },
+    "collateral_id": {
+      "type": "string",
+      "description": "Reference to associated collateral",
+      "pattern": "^COLL-[0-9]+$",
+      "examples": ["COLL-555"]
+    },
+    "financial": {
+      "type": "object",
+      "description": "Financial details of the loan",
+      "required": ["principal_amount", "currency", "interest_rate"],
+      "properties": {
+        "principal_amount": {
+          "type": "number",
+          "description": "Original loan principal amount",
+          "minimum": 0,
+          "examples": [500000]
+        },
+        "outstanding_balance": {
+          "type": "number",
+          "description": "Current outstanding balance",
+          "minimum": 0,
+          "examples": [450000]
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code",
+          "pattern": "^[A-Z]{3}$",
+          "examples": ["USD", "EUR", "GBP"]
+        },
+        "interest_rate": {
+          "type": "number",
+          "description": "Annual interest rate as decimal (e.g., 0.05 for 5%)",
+          "minimum": 0,
+          "maximum": 1,
+          "examples": [0.05, 0.0325]
+        },
+        "interest_type": {
+          "type": "string",
+          "description": "Type of interest calculation",
+          "enum": ["fixed", "floating", "variable"],
+          "examples": ["fixed"]
+        },
+        "fees": {
+          "type": "object",
+          "description": "Associated fees",
+          "properties": {
+            "origination_fee": {
+              "type": "number",
+              "minimum": 0
+            },
+            "servicing_fee": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "dates": {
+      "type": "object",
+      "description": "Important dates for the loan",
+      "required": ["origination_date", "maturity_date"],
+      "properties": {
+        "origination_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Date the loan was originated",
+          "examples": ["2024-01-15"]
+        },
+        "maturity_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Date the loan matures",
+          "examples": ["2029-01-15"]
+        },
+        "first_payment_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Date of first payment",
+          "examples": ["2024-02-15"]
+        },
+        "last_modified_date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last modification",
+          "examples": ["2024-03-20T14:30:00Z"]
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "description": "Current status of the loan",
+      "enum": ["active", "pending", "disbursed", "defaulted", "closed", "cancelled"],
+      "examples": ["active"]
+    },
+    "loan_type": {
+      "type": "string",
+      "description": "Type/purpose of the loan",
+      "enum": ["term", "revolving", "bridge", "construction", "working_capital"],
+      "examples": ["term"]
+    },
+    "collateral_required": {
+      "type": "boolean",
+      "description": "Whether collateral is required for this loan",
+      "examples": [true]
+    },
+    "repayment_schedule": {
+      "type": "object",
+      "description": "Repayment terms",
+      "properties": {
+        "frequency": {
+          "type": "string",
+          "enum": ["monthly", "quarterly", "semi-annual", "annual", "bullet"],
+          "examples": ["monthly"]
+        },
+        "number_of_payments": {
+          "type": "integer",
+          "minimum": 1,
+          "examples": [60]
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form notes about the loan",
+      "maxLength": 1000
+    }
+  }
+}

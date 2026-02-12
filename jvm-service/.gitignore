@@ -1,0 +1,18 @@
+# Clojure
+.cpcache/
+.nrepl-port
+.nrepl-history
+target/
+*.jar
+*.class
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+
+# Logs
+*.log

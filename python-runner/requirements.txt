@@ -1,0 +1,10 @@
+# Python Validation Runner Dependencies
+
+# Bencode library for babashka pods protocol (bencode over stdin/stdout)
+bencodepy>=0.9.5
+
+# YAML parsing for configuration files
+PyYAML>=6.0
+
+# JSON Schema validation for entity data validation
+jsonschema>=4.17.0

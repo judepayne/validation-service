@@ -1,0 +1,8 @@
+# Ignore all files in results directory (test outputs)
+*
+
+# But keep this .gitignore file
+!.gitignore
+
+# Optionally keep a README
+!README.md

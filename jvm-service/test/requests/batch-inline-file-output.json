@@ -1,0 +1,30 @@
+{
+  "entities": [
+    {
+      "entity_type": "loan",
+      "entity_data": {
+        "$schema": "file://../models/loan.schema.v1.0.0.json",
+        "id": "LOAN-12345",
+        "loan_number": "LN-001",
+        "facility_id": "FAC-100",
+        "financial": {
+          "principal_amount": 100000,
+          "outstanding_balance": 75000,
+          "currency": "USD",
+          "interest_rate": 0.05
+        },
+        "dates": {
+          "origination_date": "2024-01-01",
+          "maturity_date": "2025-01-01"
+        },
+        "status": "active"
+      }
+    }
+  ],
+  "id_fields": {
+    "file://../models/loan.schema.v1.0.0.json": "loan_number"
+  },
+  "ruleset_name": "quick",
+  "output_mode": "file",
+  "output_path": "test/results/batch-inline-output.json"
+}

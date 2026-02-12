@@ -1,0 +1,23 @@
+{
+  "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v2.0.0.json",
+  "id": "LOAN-20001",
+  "reference_number": "LN-2024-00002",
+  "facility_ref": "FAC-200",
+  "loan_category": "commercial",
+  "client_id": "CLIENT-002",
+  "financial": {
+    "principal_amount": 750000,
+    "outstanding_balance": 700000,
+    "currency": "USD",
+    "rate": 0.05,
+    "interest_type": "floating"
+  },
+  "dates": {
+    "origination_date": "2024-03-01",
+    "maturity_date": "2030-03-01",
+    "first_payment_date": "2024-04-01"
+  },
+  "status": "active",
+  "loan_type": "term",
+  "collateral_required": true
+}

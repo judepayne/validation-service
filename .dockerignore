@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+jvm-service/target/
+jvm-service/.cpcache/
+jvm-service/.nrepl-port
+jvm-service/.lsp/
+
+# Python
+python-runner/__pycache__/
+python-runner/**/__pycache__/
+python-runner/*.pyc
+python-runner/**/*.pyc
+python-runner/.pytest_cache/
+python-runner/**/.pytest_cache/
+python-runner/*.egg-info/
+
+# Test files and results
+jvm-service/test/
+python-runner/tests/
+jvm-service/test-data/
+**/test-results/
+
+# Documentation
+*.md
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+.DS_Store
+
+# Development scripts
+jvm-service/curl.txt
+python-runner/run_all_tests.py

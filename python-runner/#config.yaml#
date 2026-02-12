@@ -1,0 +1,52 @@
+# Python Runner Configuration
+# Defines rule hierarchies for inline and batch validation modes
+
+master_rules_directory: "./rules"
+
+# Rules for inline mode (real-time validation)
+# Rules are assigned per schema version for version-specific validation
+inline_rules:
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_001_v1  # JSON schema validation
+    - rule_id: rule_002_v1  # Financial soundness checks
+  "https://bank.example.com/schemas/loan/v2.0.0":
+    - rule_id: rule_001_v1  # JSON schema validation (v2 schema)
+    - rule_id: rule_002_v1  # Financial soundness checks
+  # Backward compatibility fallback for tests without $schema
+  loan:
+    - rule_id: rule_001_v1  # JSON schema validation
+    - rule_id: rule_002_v1  # Financial soundness checks
+  facility: []
+  deal: []
+
+# Rules for batch mode (comprehensive validation)
+# Rules are assigned per schema version for version-specific validation
+batch_rules:
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_001_v1  # JSON schema validation
+    - rule_id: rule_002_v1  # Financial soundness checks
+  "https://bank.example.com/schemas/loan/v2.0.0":
+    - rule_id: rule_001_v1  # JSON schema validation (v2 schema)hyy
+    - rule_id: rule_002_v1  # Financial soundness checks
+  # Backward compatibility fallback for tests without $schema
+  loan:
+    - rule_id: rule_001_v1  # JSON schema validation
+    - rule_id: rule_002_v1  # Financial soundness checks
+  facility: []
+  deal: []
+
+# Schema URL to entity helper class mapping
+schema_to_helper_mapping:
+  "https://bank.example.com/schemas/loan/v1.0.0": "loan_v1.LoanV1"
+  "https://bank.example.com/schemas/loan/v2.0.0": "loan_v2.LoanV2"
+
+# Default helper when no $schema field is present
+default_helpers:
+  loan: "loan_v1.LoanV1"
+  # facility: "facility_v1.FacilityV1"  # TODO: Implement
+  # deal: "deal_v1.DealV1"              # TODO: Implement
+
+# Version compatibility settings
+version_compatibility:
+  allow_minor_version_fallback: true
+  strict_major_version: true

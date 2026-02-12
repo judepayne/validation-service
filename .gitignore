@@ -1,0 +1,40 @@
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.env
+.venv
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+
+# Clojure
+.cpcache/
+.nrepl-port
+.nrepl-history
+target/
+*.jar
+*.class
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+*.log
+*.bak
+config.local.yaml
+.claude/
