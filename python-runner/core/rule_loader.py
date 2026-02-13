@@ -36,16 +36,26 @@ from typing import List, Dict, Any
 class RuleLoader:
     """Dynamically loads validation rules from filesystem"""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, config_loader=None, rule_fetcher=None):
         """
-        Initialize rule loader with configuration.
+        Initialize rule loader.
 
         Args:
-            config: Configuration dict with master_rules_directory and rule definitions
+            config: Business configuration dict
+            config_loader: ConfigLoader instance (optional, for URI resolution)
+            rule_fetcher: RuleFetcher instance (optional, for remote rules)
         """
         self.config = config
-        self.rules_dir = Path(config.get("master_rules_directory", "./rules"))
+        self.config_loader = config_loader
+        self.rule_fetcher = rule_fetcher
         self.loaded_rules = {}  # Cache: rule_id -> rule_class
+
+        # Backward compatibility: support master_rules_directory
+        if 'master_rules_directory' in config:
+            self.rules_dir = Path(config['master_rules_directory'])
+        else:
+            # New mode: rules fetched via URIs
+            self.rules_dir = None
 
     def load_rules(self, rule_configs: List[Dict[str, Any]]) -> List[Any]:
         """
@@ -71,12 +81,13 @@ class RuleLoader:
 
         return rules
 
-    def _load_single_rule(self, rule_id: str) -> Any:
+    def _load_single_rule(self, rule_id: str, entity_type: str = None) -> Any:
         """
         Load a single rule by ID.
 
         Args:
             rule_id: Rule identifier (e.g., "rule_001_v1")
+            entity_type: Optional entity type hint for faster lookup
 
         Returns:
             Instantiated rule object
@@ -90,43 +101,63 @@ class RuleLoader:
             rule_class = self.loaded_rules[rule_id]
             return rule_class(rule_id)
 
-        # Determine entity type from rule file location
-        # We need to check all entity directories
-        entity_types = ["loan", "facility", "deal"]
-        rule_file = None
-        entity_type = None
-        searched = []
+        # Determine if we're in URI mode or path mode
+        if self.config_loader and self.rule_fetcher:
+            # New mode: resolve URI and fetch
+            if not entity_type:
+                # Try to infer entity type from rule_id context or search
+                entity_type = self._infer_entity_type(rule_id)
 
-        for etype in entity_types:
-            potential_path = self.rules_dir / etype / f"{rule_id}.py"
-            searched.append(str(potential_path))
-            if potential_path.exists():
-                rule_file = potential_path
-                entity_type = etype
-                break
+            rule_uri = self.config_loader.resolve_rule_uri(entity_type, rule_id)
+            rule_path = self.rule_fetcher.fetch_rule(rule_uri)
 
-        if rule_file is None:
-            raise FileNotFoundError(
-                f"Rule file not found: {rule_id}. "
-                f"Searched: {', '.join(searched)}"
-            )
+            # Load module from fetched path
+            module_name = f"rules.dynamic.{rule_id}"
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, rule_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+            except Exception as e:
+                raise ImportError(
+                    f"Failed to import rule {rule_id} from {rule_uri}: {e}"
+                )
 
-        # Load module dynamically
-        module_name = f"rules.{entity_type}.{rule_id}"
-        try:
-            spec = importlib.util.spec_from_file_location(module_name, rule_file)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception as e:
-            raise ImportError(
-                f"Failed to import rule {rule_id} from {rule_file}: {e}"
-            )
+        else:
+            # Backward compat mode: search local rules_dir
+            entity_types = ["loan", "facility", "deal"]
+            rule_file = None
+            searched = []
+
+            for etype in entity_types:
+                potential_path = self.rules_dir / etype / f"{rule_id}.py"
+                searched.append(str(potential_path))
+                if potential_path.exists():
+                    rule_file = potential_path
+                    entity_type = etype
+                    break
+
+            if rule_file is None:
+                raise FileNotFoundError(
+                    f"Rule file not found: {rule_id}. "
+                    f"Searched: {', '.join(searched)}"
+                )
+
+            # Load module
+            module_name = f"rules.{entity_type}.{rule_id}"
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, rule_file)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+            except Exception as e:
+                raise ImportError(
+                    f"Failed to import rule {rule_id} from {rule_file}: {e}"
+                )
 
         # Get rule class (always named "Rule")
         class_name = "Rule"
         if not hasattr(module, class_name):
             raise AttributeError(
-                f"Rule class '{class_name}' not found in {rule_file}. "
+                f"Rule class '{class_name}' not found. "
                 f"All rules must define a class named 'Rule'."
             )
 
@@ -137,4 +168,36 @@ class RuleLoader:
 
         # Return new instance with injected ID
         return rule_class(rule_id)
+
+    def _infer_entity_type(self, rule_id: str) -> str:
+        """
+        Infer entity type by searching rule configs.
+
+        Looks through all rulesets to find which entity type contains this rule.
+        """
+        for ruleset_name, ruleset_config in self.config.items():
+            if ruleset_name.endswith('_rules'):
+                for key, rules_list in ruleset_config.items():
+                    if self._rule_in_list(rule_id, rules_list):
+                        # Found rule - key might be schema URL or entity type
+                        if key.startswith('http'):
+                            # Schema URL - default to 'loan' for now
+                            # In a real system, we'd map schema to entity type
+                            return 'loan'
+                        else:
+                            return key  # Entity type directly
+
+        # Default fallback
+        return 'loan'
+
+    def _rule_in_list(self, rule_id: str, rules_list: list) -> bool:
+        """Check if rule_id exists in rules list (including nested children)"""
+        for rule in rules_list:
+            if rule.get('rule_id') == rule_id:
+                return True
+            # Check children recursively
+            if 'children' in rule:
+                if self._rule_in_list(rule_id, rule['children']):
+                    return True
+        return False
 

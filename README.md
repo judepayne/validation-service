@@ -35,13 +35,84 @@ Service health check endpoint.
 Once the container is running, explore and test the API using the OpenAPI interface at:
 **http://localhost:8080/swagger-ui**
 
+## Using as a Library
+
+The validation service core logic can be embedded in other JVM applications without the HTTP layer. This is useful for:
+- Batch jobs validating large datasets
+- Streaming pipelines with inline validation
+- Testing validation logic directly
+- Embedding in other services
+
+**Quick example:**
+
+```clojure
+(require '[validation-service.library.api :as vlib])
+
+;; Create service instance
+(def service (vlib/create-service library-config))
+
+;; Validate an entity
+(def results (.validate service "loan" entity-data "quick"))
+
+;; Results is a vector of validation result maps
+(println "Passed:" (count (filter #(= "PASS" (get % "status")) results)))
+```
+
+See [docs/LIBRARY-USAGE.md](docs/LIBRARY-USAGE.md) for complete documentation and examples.
+
 ## Configuration
 
-**JVM Service** (`jvm-service/config.edn`)
-Service configuration including port, Python runner path, and coordination service settings.
+The validation service uses a **two-tier configuration architecture** to separate infrastructure concerns from business logic:
 
-**Python Rule Runner** (`python-runner/config.yaml`)
-Defines rule sets (quick/thorough), schema version mappings, and entity helper routing. Controls which rules execute for each entity type and schema version.
+### Tier 1: Infrastructure Configuration
+
+**JVM Service** (`jvm-service/resources/library-config.edn`)
+- Service infrastructure settings (Python runner path, timeouts, pool size)
+- Coordination service settings (URL, retry logic, circuit breaker)
+- Points to Python runner's local config
+
+**Python Runner - Local Config** (`python-runner/local-config.yaml`)
+- Infrastructure config owned by service team
+- Points to business config location (can be remote URI)
+- Cache settings for remote configs and rules
+- Supports relative paths, `file://`, `http://`, and `https://` URIs
+
+### Tier 2: Business Configuration
+
+**Business Config** (`business-config.yaml`)
+- Business logic config owned by rules team
+- Defines rule sets (quick/thorough) and their rule assignments
+- Schema version to entity helper mappings
+- Optional `rules_base_uri` for remote rule fetching
+- Can live in a separate repository for production
+
+### Development Setup
+
+For local development, the default configuration uses local file paths:
+```yaml
+# python-runner/local-config.yaml
+business_config_uri: "../business-config.yaml"
+
+# business-config.yaml
+# No rules_base_uri - rules loaded from ./rules/ directory
+```
+
+### Production Setup
+
+For production, point to remote configurations:
+```yaml
+# python-runner/local-config.yaml
+business_config_uri: "https://rules-repo.example.com/prod/business-config.yaml"
+
+# business-config.yaml (in rules repository)
+rules_base_uri: "https://rules-repo.example.com/prod/rules"
+```
+
+**Benefits:**
+- **Separation of concerns:** Service team owns infrastructure, rules team owns business logic
+- **Independent versioning:** Rules can be versioned and deployed separately from the service
+- **Flexible deployment:** Different environments can point to different rule versions
+- **Remote fetching:** Rules can be stored in artifact repositories (S3, HTTP servers, etc.)
 
 # Schemas
 
@@ -49,7 +120,7 @@ schemas are JSON schema and live in the `models` folder.
 
 # Writing a rule
 
-rules lives in `python-runner\rules\<entity-sub-folder>` and must inherit from the base class. Each rule has the following interface:
+Rules live in `rules/<entity-sub-folder>` at the project root (e.g., `rules/loan/`, `rules/facility/`, `rules/deal/`) and must inherit from the base class. Each rule has the following interface:
 
 `get_id` -> return the id of a rule (its filename minuse the .py extension)
 `validates` -> return the name of the data entity type that the rule validates.

@@ -183,6 +183,120 @@ See the "Entity Helper Classes" section for detailed implementation.
 - Support queries by vocabulary terms (parent, all_siblings, etc.)
 - Return structured data for hierarchical and related entities
 
+### Library + Web Wrapper Architecture
+
+**Issue:** [GitHub Issue #1](https://github.com/judepayne/validation-service/issues/1)
+
+The JVM service is structured in two layers to separate reusable validation logic from HTTP transport concerns:
+
+```
+┌──────────────────────────────────────────────────────┐
+│              Web Layer (HTTP/REST)                   │
+│                                                      │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────┐  │
+│  │  Handlers  │  │   Routes   │  │ Jetty Server │  │
+│  └─────┬──────┘  └────────────┘  └──────────────┘  │
+│        │                                            │
+│        │ ValidationService protocol calls           │
+│        ▼                                            │
+│  ┌────────────────────────────────────────────┐    │
+│  │   ValidationService Protocol Interface     │    │
+│  │   • validate(entity-type, data, ruleset)   │    │
+│  │   • discover-rules(...)                    │    │
+│  │   • batch-validate(...)                    │    │
+│  │   • batch-file-validate(...)               │    │
+│  └────────────────────────────────────────────┘    │
+└─────────────────────┬────────────────────────────────┘
+                      │
+┌─────────────────────▼────────────────────────────────┐
+│            Library Layer (Core Logic)                │
+│                                                      │
+│  ┌────────────────────────────────────────────┐    │
+│  │   ValidationServiceImpl (record)           │    │
+│  │   Holds: runner-client, config             │    │
+│  └─────┬──────────────────────────────────────┘    │
+│        │                                            │
+│        │ Delegates to workflow functions            │
+│        ▼                                            │
+│  ┌────────────────────────────────────────────┐    │
+│  │   Workflow Orchestration                   │    │
+│  │   • execute-validation                     │    │
+│  │   • execute-discover-rules                 │    │
+│  │   • execute-batch-validation               │    │
+│  │   • execute-batch-file-validation          │    │
+│  └─────┬──────────────────────────────────────┘    │
+│        │                                            │
+│        │ Uses runner protocol                       │
+│        ▼                                            │
+│  ┌────────────────────────────────────────────┐    │
+│  │   ValidationRunnerClient Protocol          │    │
+│  │   Implementation: pods-client              │    │
+│  └────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────┘
+```
+
+**Library Layer** (`validation-service.library.*`):
+- **Public API:** `ValidationService` protocol with methods for validation operations
+- **Implementation:** `ValidationServiceImpl` record holding runner-client and config
+- **Initialization:** `create-service` and `shutdown-service` functions
+- **Internal:** Workflow orchestration, runner protocol, utilities
+- **Configuration:** `library-config.edn` with `:python_runner` and `:coordination_service`
+- **Returns:** Raw data structures (maps/vectors) - no HTTP dependencies
+
+**Web Layer** (`validation-service.api.*`, `core.clj`):
+- **Handlers:** HTTP request handlers that call protocol methods and wrap results in Ring responses
+- **Routes:** Reitit route definitions with Swagger documentation
+- **Schemas:** OpenAPI/Swagger schemas for API documentation
+- **Server:** Jetty server startup and lifecycle management
+- **Configuration:** `web-config.edn` with `:service`, `:cors`, `:logging`, `:monitoring`
+- **Middleware:** Injects ValidationService into request context
+
+**Benefits:**
+
+1. **Reusability:** Library can be embedded in other JVM applications:
+   - Batch jobs validating large datasets
+   - Streaming pipelines with inline validation
+   - Other services requiring validation logic
+   - Direct testing of validation without HTTP layer
+
+2. **Separation of Concerns:**
+   - Business logic isolated from transport layer
+   - Protocol methods return data, handlers add HTTP semantics
+   - Library has zero Ring/Reitit/Jetty dependencies
+   - Clear boundaries between layers
+
+3. **Testing:**
+   - Core logic testable without starting HTTP server
+   - Protocol methods can be tested with test doubles
+   - Integration tests can use library directly
+
+4. **Migration Path:**
+   - Library layer migrates cleanly to Java (protocol → interface, record → class)
+   - Library becomes standalone JAR (service beans in Spring)
+   - Web layer becomes Spring Boot controllers
+   - Gradual migration with both layers coexisting
+
+**Usage Example:**
+
+```clojure
+;; Library usage (no HTTP)
+(require '[validation-service.library.api :as vlib])
+
+(def service (vlib/create-service library-config))
+
+(def results
+  (.validate service "loan" loan-data "quick"))
+;; Returns: [{"rule_id" "..." "status" "PASS" ...}]
+
+;; Web layer wraps this in HTTP response
+(defn validate-handler [{:keys [validation-service body]}]
+  (let [results (.validate validation-service ...)]
+    {:status 200
+     :body {:results results :summary {...}}}))
+```
+
+See [docs/LIBRARY-USAGE.md](LIBRARY-USAGE.md) for detailed library usage documentation.
+
 ## Communication Protocol
 
 ### Babashka Pods (POC Phase)
@@ -383,7 +497,7 @@ from validation_engine import ValidationEngine
 def main():
     # Transport layer is injected
     transport = PodsTransportHandler()  # Or: GrpcTransportHandler()
-    engine = ValidationEngine(config_path="./config.yaml")
+    engine = ValidationEngine(config_path="./local-config.yaml")
 
     transport.start()
 
@@ -543,37 +657,51 @@ All orchestration code depends only on the `ValidationRunnerClient` abstraction,
 
 ### Configuration
 
-```yaml
-# config.yaml
+The JVM service uses a **two-configuration architecture** separating library and web concerns:
 
-service:
-  port: 8080
-  max_concurrent_validations: 100
+**Library Configuration** (`jvm-service/resources/library-config.edn`):
+```clojure
+{:python_runner
+ {:executable "python3"
+  :script_path "../python-runner/runner.py"
+  :config_path "../python-runner/local-config.yaml"
+  :spawn_timeout_ms 5000
+  :validation_timeout_ms 30000
+  :pool_size 5
+  :pool_max_idle_ms 300000}
 
-python_runner:
-  executable: "python3"
-  script_path: "./python-runner/runner.py"
-  config_path: "./python-runner/config.yaml"
-  spawn_timeout_ms: 5000
-  validation_timeout_ms: 30000
+ :coordination_service
+ {:base_url "http://localhost:8081"
+  :timeout_ms 5000
+  :retry_attempts 3
+  :retry_delay_ms 1000
+  :circuit_breaker_enabled true
+  :failure_threshold 5
+  :reset_timeout_ms 60000}}
+```
 
-coordination_service:
-  base_url: "http://coordination-service:8080"
-  timeout_ms: 5000
-  retry_attempts: 3
-  retry_delay_ms: 1000
+**Web Configuration** (`jvm-service/resources/web-config.edn`):
+```clojure
+{:service
+ {:port 8080
+  :host "0.0.0.0"
+  :max_threads 100}
 
-logging:
-  level: INFO
-  destination: "./logs/validation-service.log"
-  log_requests: true
-  log_rule_performance: true
+ :cors
+ {:allowed_origins ["http://localhost:3000"]
+  :allowed_methods [:get :post :put :delete :options]
+  :allowed_headers ["Content-Type" "Authorization"]
+  :max_age 3600}
 
-monitoring:
-  enabled: true
-  rule_performance_threshold_ms: 100
-  alert_on_threshold_exceeded: true
-  metrics_export_interval_ms: 60000
+ :logging
+ {:level :info
+  :appenders {:console {:enabled true}
+              :file {:enabled true
+                     :path "./logs/validation-service.log"}}}
+
+ :monitoring
+ {:metrics_enabled true
+  :health_check_enabled true}}
 ```
 
 ### REST API
@@ -906,7 +1034,7 @@ The JVM service tracks and logs:
 - Number of rules executed
 
 **Alerting:**
-- Rule exceeds performance threshold (configured in config.yaml)
+- Rule exceeds performance threshold (configured in business-config.yaml)
 - Coordination service timeout/failures
 - Python runner spawn failures
 - Abnormal error rates
@@ -928,61 +1056,117 @@ The JVM service tracks and logs:
 ### Directory Structure
 
 ```
-python-runner/
-├── runner.py                # Main entry point
-├── config.yaml              # Rule configuration
-├── validation_engine.py     # Core validation business logic
-├── rule_loader.py           # Dynamic rule discovery and loading
-├── rule_executor.py         # Rule execution engine
-├── rule_test_helper.py      # Simple testing framework for rules
-├── cache.py                 # Simple caching for entity/required data
-├── requirements.txt         # Python dependencies
-├── entity_helpers/          # Entity helper classes (wrappers for data model access)
-│   ├── __init__.py          # Exports Loan, Facility, Deal, create_entity_helper
-│   ├── base.py              # Shared base class and utilities (optional)
-│   ├── loan_v1.py              # Loan helper class
-│   ├── facility.py          # Facility helper class
-│   └── deal.py              # Deal helper class
-├── transport/               # Transport abstraction layer
-│   ├── __init__.py
-│   ├── base.py             # Abstract TransportHandler interface
-│   ├── pods_transport.py   # Babashka pods implementation
-│   └── grpc_transport.py   # gRPC implementation (future)
-└── rules/                   # Master rules directory
-    ├── loan/
-    │   ├── rule_001_v1.py
-    │   ├── rule_001_v2.py   # Updated version of rule_001
-    │   ├── rule_042_v1.py
-    │   ├── rule_055_v1.py
-    │   ├── rule_055_v1_test.py  # Test for rule_055_v1
-    │   └── rule_066_v1.py
-    ├── facility/
-    │   ├── rule_003_v1.py
-    │   ├── rule_017_v1.py
-    │   └── rule_018_v1.py
-    └── deal/
-        └── rule_010_v1.py
+validation-service/
+├── business-config.yaml     # Business logic config (Tier 2)
+├── rules/                   # Top-level rules directory (can be separate repo)
+│   ├── base.py             # Base class for all rules
+│   ├── loan/
+│   │   ├── rule_001_v1.py
+│   │   ├── rule_002_v1.py
+│   │   ├── rule_003_v1.py
+│   │   └── rule_004_v1.py
+│   ├── facility/
+│   │   ├── rule_003_v1.py
+│   │   ├── rule_017_v1.py
+│   │   └── rule_018_v1.py
+│   └── deal/
+│       └── rule_010_v1.py
+├── python-runner/
+│   ├── runner.py                # Main entry point
+│   ├── local-config.yaml        # Infrastructure config (Tier 1)
+│   ├── requirements.txt         # Python dependencies
+│   ├── core/                    # Core validation modules
+│   │   ├── __init__.py
+│   │   ├── validation_engine.py # Core validation business logic
+│   │   ├── rule_loader.py       # Dynamic rule discovery and loading
+│   │   ├── rule_executor.py     # Rule execution engine
+│   │   ├── config_loader.py     # Two-tier config loading with URI fetching
+│   │   └── rule_fetcher.py      # Remote rule fetching with caching
+│   ├── entity_helpers/          # Entity helper classes
+│   │   ├── __init__.py          # create_entity_helper factory
+│   │   ├── version_registry.py  # Schema URL → helper class mapping
+│   │   ├── loan_v1.py          # Loan v1 helper (schema v1.0.0)
+│   │   ├── loan_v2.py          # Loan v2 helper (schema v2.0.0)
+│   │   ├── facility_v1.py      # Facility helper
+│   │   └── deal_v1.py          # Deal helper
+│   ├── transport/               # Transport abstraction layer
+│   │   ├── __init__.py
+│   │   ├── base.py             # Abstract TransportHandler interface
+│   │   ├── pods_transport.py   # Babashka pods implementation
+│   │   ├── bencode_reader.py   # Bencode protocol utilities
+│   │   └── case_conversion.py  # snake_case ↔ kebab-case conversion
+│   └── tests/                   # Comprehensive test suite
+│       ├── test_config_loader.py
+│       ├── test_rule_fetcher.py
+│       ├── test_rule_loader.py
+│       ├── test_validation_engine.py
+│       └── ...
+├── jvm-service/
+│   └── resources/
+│       ├── library-config.edn   # Library layer config
+│       └── web-config.edn       # Web layer config
+└── models/                      # JSON Schema definitions
+    ├── loan.schema.v1.0.0.json
+    └── loan.schema.v2.0.0.json
 ```
+
+**Key Structural Changes:**
+- Rules moved to top-level `rules/` directory (can be separate repository in production)
+- Two-tier configuration: `local-config.yaml` (infrastructure) + `business-config.yaml` (business logic)
+- Core modules organized in `core/` directory
+- Entity helpers support versioning with `version_registry.py`
+- Comprehensive test coverage in `tests/` directory
 
 ### Configuration
 
-```yaml
-# config.yaml - Python Runner Rule Set Configuration
-#
-# Note: The Python runner is rule-set agnostic. The JVM service has inline/batch
-# modes for orchestration (when to call validation), and separately passes a
-# ruleset_name to specify which rules to execute. These are independent concerns.
-#
-# JVM inline mode might use "quick_rules" (real-time, essential checks)
-# JVM batch mode might use "thorough_rules" (background, comprehensive checks)
-# But the JVM service controls this mapping, not the Python runner.
+**Issue:** [GitHub Issue #2](https://github.com/judepayne/validation-service/issues/2)
 
-master_rules_directory: "./rules"
+The Python runner uses a **two-tier configuration architecture** to separate infrastructure concerns (owned by service team) from business logic (owned by rules team):
+
+#### Tier 1: Local Configuration (Infrastructure)
+
+**File:** `python-runner/local-config.yaml`
+
+```yaml
+# Local Configuration (Tier 1)
+# Infrastructure config - owned by service team
+# Points to business configuration location
+
+# URI to business config (tier 2)
+# Supports: relative paths, file://, http://, https://
+business_config_uri: "../business-config.yaml"
+
+# Optional: Cache directory for remote configs and rules
+# Default: /tmp/validation-cache
+rule_cache_dir: "/tmp/validation-cache"
+
+# Optional: Enable/disable caching (default: true)
+cache_enabled: true
+```
+
+#### Tier 2: Business Configuration (Rules Logic)
+
+**File:** `business-config.yaml` (can be in separate repository)
+
+```yaml
+# Business Configuration (Tier 2)
+# Business logic config - owned by rules team
+# Defines rulesets, rules, and schema mappings
+
+# Optional: Base URI for rule files
+# If omitted, rules loaded from local ../rules/ directory
+# rules_base_uri: "https://rules-repo.example.com/v2.1/rules"
 
 # Quick rule set - typically used for real-time validation
 quick_rules:
+  # Schema-based routing (preferred)
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_001_v1
+    - rule_id: rule_002_v1
+
+  # Fallback for entities without $schema
   loan:
-    - rule_id: rule_001_v2   # Using version 2 (updated rule)
+    - rule_id: rule_001_v1
       children:
         - rule_id: rule_042_v1
     - rule_id: rule_055_v1
@@ -991,42 +1175,85 @@ quick_rules:
     - rule_id: rule_003_v1
       children:
         - rule_id: rule_017_v1
-        - rule_id: rule_018_v1
-          children:
-            - rule_id: rule_019_v1
 
   deal:
     - rule_id: rule_010_v1
 
 # Thorough rule set - typically used for batch/background validation
 thorough_rules:
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_001_v1
+    - rule_id: rule_002_v1
+    - rule_id: rule_003_v1
+      children:
+        - rule_id: rule_004_v1
+
   loan:
-    - rule_id: rule_001_v2   # Using version 2 (updated rule)
+    - rule_id: rule_001_v1
       children:
         - rule_id: rule_042_v1
         - rule_id: rule_066_v1  # Additional comprehensive check
     - rule_id: rule_055_v1
-    - rule_id: rule_070_v1      # More comprehensive checks
-    - rule_id: rule_071_v1
 
   facility:
     - rule_id: rule_003_v1
       children:
         - rule_id: rule_017_v1
         - rule_id: rule_018_v1
-          children:
-            - rule_id: rule_019_v1
-    - rule_id: rule_025_v1      # Batch-only check
 
   deal:
     - rule_id: rule_010_v1
-    - rule_id: rule_011_v1      # Batch-only check
+    - rule_id: rule_011_v1
+
+# Schema URL to entity helper class mapping
+schema_to_helper_mapping:
+  "https://bank.example.com/schemas/loan/v1.0.0": "loan_v1.LoanV1"
+  "https://bank.example.com/schemas/loan/v2.0.0": "loan_v2.LoanV2"
+
+# Default helper when no $schema field is present
+default_helpers:
+  loan: "loan_v1.LoanV1"
+  # facility: "facility_v1.FacilityV1"
+  # deal: "deal_v1.DealV1"
+
+# Version compatibility settings
+version_compatibility:
+  allow_minor_version_fallback: true
+  strict_major_version: true
 ```
+
+**Configuration Benefits:**
+
+1. **Separation of Concerns:**
+   - Service team owns infrastructure config (local-config.yaml)
+   - Rules team owns business logic config (business-config.yaml)
+   - Clear ownership boundaries
+
+2. **Independent Versioning:**
+   - Rules can be versioned and deployed separately from service
+   - Different environments can point to different rule versions
+   - A/B testing and gradual rollouts possible
+
+3. **Remote Rule Fetching:**
+   - Business config can be hosted remotely (HTTP, S3, etc.)
+   - Rules can be fetched from URIs with caching
+   - Enables centralized rule management across multiple services
+
+4. **Flexible Deployment:**
+   - Development: Local paths (`../business-config.yaml`, `../rules/`)
+   - Production: Remote URIs (`https://rules-repo.example.com/v2.1/`)
+
+**Configuration Loading:**
+- `ConfigLoader` handles two-tier config with URI fetching and caching
+- `RuleFetcher` fetches rules from URIs (file://, http://, https://)
+- SHA256-based cache keys for immutable rules
+- Backward compatible: works without `business_config_uri` or `rules_base_uri`
 
 **Configuration Notes:**
 - Hierarchical structure: Child rules only execute if parent rule status is PASS
-- Rule reuse: Same rule (e.g., rule_001) can appear in both inline and batch configs
-- Flexibility: Easy to add/remove rules without code changes
+- Schema-based routing: Rules mapped by schema URL for version-specific validation
+- Fallback routing: Entity type keys for backward compatibility
+- Rule reuse: Same rule can appear in multiple rulesets
 - Arbitrary nesting: Supports multiple levels of rule hierarchy
 
 ### Entity Helper Classes
@@ -1409,9 +1636,10 @@ from rule_loader import RuleLoader
 from rule_executor import RuleExecutor
 import yaml
 
-# Load configuration
-with open("config.yaml") as f:
-    config = yaml.safe_load(f)
+# Load configuration (two-tier)
+from core.config_loader import ConfigLoader
+config_loader = ConfigLoader("local-config.yaml")
+config = config_loader.get_business_config()
 
 # Sample test data for each entity type
 test_data = {
@@ -2095,7 +2323,7 @@ from validation_engine import ValidationEngine
 
 def main():
     """Main entry point with pluggable transport"""
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "./config.yaml"
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "./local-config.yaml"
 
     # Initialize components
     engine = ValidationEngine(config_path)
@@ -2347,7 +2575,7 @@ Note: Schemas are stored in the models/ directory and loaded from local files. S
 - Alert monitoring system
 
 **Python runner timeout:**
-- Kill process after timeout (configured in config.yaml)
+- Kill process after timeout (configured in library-config.edn)
 - Return timeout error to client
 - Log for investigation
 
@@ -2489,15 +2717,18 @@ CMD ["sh", "-c", "java $JAVA_OPTS -jar validation-service.jar"]
 **Container Directory Structure:**
 ```
 /app/
+├── business-config.yaml              # Business logic configuration
+├── rules/                            # Validation rules (top-level)
+│   └── loan/
 ├── models/                           # JSON schemas
 │   └── loan.schema.v1.0.0.json
 ├── python-runner/                    # Python validation engine
 │   ├── runner.py
-│   ├── config.yaml
-│   └── rules/
+│   └── local-config.yaml
 └── jvm-service/                      # Clojure web service (WORKDIR)
-    ├── config.edn
     ├── resources/
+    │   ├── library-config.edn
+    │   └── web-config.edn
     └── validation-service.jar
 ```
 
@@ -2681,8 +2912,10 @@ CMD ["java", "-jar", "validation-service.jar"]
 ✅ **Transport abstraction** - Babashka pods with pluggable ValidationRunnerClient protocol
 ✅ **Single persistent pod** - Created at startup, eliminates per-request spawn overhead
 ✅ **Entity helper abstraction** - LoanV1/V2 helpers decouple rules from data model
-✅ **Rule testing framework** - 12 comprehensive tests, all passing
+✅ **Rule testing framework** - 15 comprehensive tests, all passing
 ✅ **Rule versioning strategy** - Version numbers in filenames and config-driven selection
+✅ **Library/Web split** - Issue #1: Separation of reusable validation library from HTTP layer
+✅ **Two-tier configuration** - Issue #2: Infrastructure config separate from business logic config
 
 **API Endpoints:**
 ✅ **Single entity validation** - `POST /api/v1/validate`
@@ -2773,48 +3006,66 @@ validation-service/
 │   ├── src/                       # Clojure source code
 │   │   └── validation_service/
 │   │       ├── core.clj
-│   │       ├── api/               # REST API handlers and routes
-│   │       ├── orchestration/     # Validation workflow logic
-│   │       ├── runner/            # ValidationRunnerClient protocol and impls
-│   │       └── monitoring/        # Performance tracking
+│   │       ├── library/           # Library layer (Issue #1)
+│   │       │   ├── service.clj    # ValidationService protocol + implementation
+│   │       │   ├── workflows.clj  # Validation orchestration workflows
+│   │       │   └── runner/        # ValidationRunnerClient protocol and impls
+│   │       └── api/               # Web layer (Issue #1)
+│   │           ├── handlers.clj   # HTTP request handlers
+│   │           ├── routes.clj     # Reitit route definitions
+│   │           └── schemas.clj    # OpenAPI/Swagger schemas
 │   ├── test/                      # Clojure tests
 │   ├── resources/                 # Configuration files
-│   │   └── config.yaml
+│   │   ├── library-config.edn     # Library layer config (Issue #1)
+│   │   └── web-config.edn         # Web layer config (Issue #1)
 │   ├── deps.edn                   # Dependency management
 │   └── README.md                  # JVM service documentation
 │
 ├── python-runner/                 # Python rule runner
 │   ├── runner.py                  # Main entry point
-│   ├── validation_engine.py       # Core validation business logic
-│   ├── rule_loader.py             # Dynamic rule discovery and loading
-│   ├── rule_executor.py           # Rule execution engine
-│   ├── rule_test_helper.py        # Testing framework for rules
-│   ├── cache.py                   # Simple caching for entity/required data
-│   ├── entity_helpers/            # Entity helper classes (wrappers for data model access)
-│   │   ├── __init__.py            # Exports Loan, Facility, Deal, create_entity_helper
-│   │   ├── base.py                # Shared base class and utilities (optional)
-│   │   ├── loan_v1.py                # Loan helper class
-│   │   ├── facility.py            # Facility helper class
-│   │   └── deal.py                # Deal helper class
+│   ├── local-config.yaml          # Infrastructure config (Tier 1, Issue #2)
+│   ├── core/                      # Core validation modules
+│   │   ├── __init__.py
+│   │   ├── validation_engine.py   # Core validation business logic
+│   │   ├── rule_loader.py         # Dynamic rule discovery and loading
+│   │   ├── rule_executor.py       # Rule execution engine
+│   │   ├── config_loader.py       # Two-tier config loading (Issue #2)
+│   │   └── rule_fetcher.py        # Remote rule fetching with caching (Issue #2)
+│   ├── entity_helpers/            # Entity helper classes with versioning
+│   │   ├── __init__.py            # create_entity_helper factory
+│   │   ├── version_registry.py    # Schema URL → helper class mapping
+│   │   ├── loan_v1.py            # Loan v1 helper (schema v1.0.0)
+│   │   ├── loan_v2.py            # Loan v2 helper (schema v2.0.0)
+│   │   ├── facility_v1.py        # Facility helper
+│   │   └── deal_v1.py            # Deal helper
 │   ├── transport/                 # Transport abstraction layer
 │   │   ├── __init__.py
 │   │   ├── base.py                # Abstract TransportHandler interface
 │   │   ├── pods_transport.py      # Babashka pods implementation
-│   │   └── grpc_transport.py      # gRPC implementation (future)
-│   ├── rules/                     # Validation rules
-│   │   ├── loan/
-│   │   │   ├── rule_001_v1.py
-│   │   │   ├── rule_001_v1_test.py
-│   │   │   ├── rule_042_v1.py
-│   │   │   └── rule_055_v1.py
-│   │   ├── facility/
-│   │   │   ├── rule_003_v1.py
-│   │   │   └── rule_017_v1.py
-│   │   └── deal/
-│   │       └── rule_010_v1.py
-│   ├── config.yaml                # Rule configuration
+│   │   ├── bencode_reader.py      # Bencode protocol utilities
+│   │   └── case_conversion.py     # snake_case ↔ kebab-case conversion
+│   ├── tests/                     # Comprehensive test suite
+│   │   ├── test_config_loader.py
+│   │   ├── test_rule_fetcher.py
+│   │   ├── test_rule_loader.py
+│   │   ├── test_validation_engine.py
+│   │   └── ...
 │   ├── requirements.txt           # Python dependencies
 │   └── README.md                  # Python runner documentation
+│
+├── business-config.yaml           # Business logic config (Tier 2, Issue #2)
+├── rules/                         # Validation rules (top-level, can be separate repo)
+│   ├── base.py                    # Base class for all rules
+│   ├── loan/
+│   │   ├── rule_001_v1.py
+│   │   ├── rule_002_v1.py
+│   │   ├── rule_003_v1.py
+│   │   └── rule_004_v1.py
+│   ├── facility/
+│   │   ├── rule_003_v1.py
+│   │   └── rule_017_v1.py
+│   └── deal/
+│       └── rule_010_v1.py
 │
 ├── models/                        # JSON Schema definitions
 │   ├── loan.schema.v1.0.0.json    # Loan entity schema v1
@@ -2867,9 +3118,11 @@ validation-service/
 - Clear ownership boundaries between orchestration and rule execution
 
 **Configuration Management:**
-- `config/` directory separate from code enables environment-specific settings
-- Python runner's `config.yaml` defines rule sets (inline vs batch)
-- JVM service configuration in `resources/config.yaml` or `config/` directory
+- **Two-tier architecture** (Issue #2): Infrastructure config (`local-config.yaml`) separate from business logic (`business-config.yaml`)
+- **Library/Web split** (Issue #1): `library-config.edn` and `web-config.edn` for clear separation of concerns
+- Python runner's `business-config.yaml` defines rule sets with schema-based routing
+- JVM service configuration in `resources/` directory (library and web configs)
+- Rules can be hosted remotely with URI-based fetching and caching
 
 **Developer Productivity:**
 - `scripts/` provides common tasks (start services, run tests)

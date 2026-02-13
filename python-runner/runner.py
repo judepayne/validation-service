@@ -8,7 +8,7 @@ It connects the transport layer (babashka pods) to the validation engine.
 Usage:
     python runner.py [config_path]
 
-Default config path: ./config.yaml
+Default config path: ./local-config.yaml
 """
 
 import sys
@@ -19,13 +19,18 @@ import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
+# Add parent directory to Python path for rules module imports
+parent_dir = os.path.dirname(script_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from transport.pods_transport import PodsTransportHandler
 from core.validation_engine import ValidationEngine
 
 
 def main():
     """Main entry point with pluggable transport"""
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "./config.yaml"
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "./local-config.yaml"
 
     # Initialize components
     engine = ValidationEngine(config_path)

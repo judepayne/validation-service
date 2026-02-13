@@ -1,0 +1,14 @@
+# Local Configuration (Tier 1)
+# Infrastructure config - owned by service team
+# Points to business configuration location
+
+# URI to business config (tier 2)
+# Supports: relative paths, file:// (absolute), http://, https://
+business_config_uri: "../business-config.yaml"
+
+# Optional: Cache directory for remote configs and rules
+# Default: /tmp/validation-cache
+rule_cache_dir: "/tmp/validation-cache"
+
+# Optional: Enable/disable caching (default: true)
+cache_enabled: true

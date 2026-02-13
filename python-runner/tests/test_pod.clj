@@ -9,7 +9,7 @@
 
 ;; Load the Python runner as a pod
 (println "\n[1] Loading Python runner as pod...")
-(pods/load-pod ["python3" "runner.py" "./config.yaml"])
+(pods/load-pod ["python3" "runner.py" "./local-config.yaml"])
 (println "✓ Pod loaded successfully")
 
 ;; The pod should expose functions in a namespace

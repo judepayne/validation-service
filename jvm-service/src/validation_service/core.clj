@@ -6,29 +6,49 @@
   (:gen-class))
 
 (defn create-server
-  "Create Jetty server instance."
-  [config]
-  (let [handler (routes/create-handler config)
-        port (get-in config [:service :port] 8080)
-        host (get-in config [:service :host] "0.0.0.0")]
-    (log/info "Creating server on" host ":" port)
-    {:server (jetty/run-jetty handler
-                              {:port port
-                               :host host
-                               :join? false})
-     :config config}))
+  "Create Jetty server instance.
+
+  Args:
+    web-config - Web configuration map with :service key
+    library-config - Library configuration map
+
+  Returns:
+    Jetty server instance"
+  [web-config library-config]
+  (let [port (get-in web-config [:service :port] 8080)
+        host (get-in web-config [:service :host] "0.0.0.0")
+        handler (routes/create-handler library-config)]
+
+    (log/info "Starting server" {:port port :host host})
+    (jetty/run-jetty handler
+                     {:port port
+                      :host host
+                      :join? false})))
 
 (defn -main
   "Application entry point."
   [& args]
   (log/info "===== Starting Validation Service =====")
   (try
-    (let [config (config/load-config)]
+    ;; Load separate configurations
+    (let [library-config (config/load-library-config)
+          web-config (config/load-web-config)]
       (log/info "Configuration loaded successfully")
-      (let [{:keys [server]} (create-server config)]
-        (log/info "Server started successfully")
+
+      (let [server (create-server web-config library-config)]
+        (log/info "Validation service started successfully")
         (log/info "Ready to accept requests")
-        (.join server)))  ;; Block main thread
+
+        ;; Register shutdown hook
+        (.addShutdownHook (Runtime/getRuntime)
+                         (Thread. (fn []
+                                   (log/info "Shutting down validation service")
+                                   (.stop server)
+                                   (log/info "Validation service stopped"))))
+
+        ;; Block main thread
+        (.join server)))
+
     (catch Exception e
       (log/error e "Failed to start server")
       (System/exit 1))))

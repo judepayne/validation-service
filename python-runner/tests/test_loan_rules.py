@@ -12,7 +12,7 @@ print("Testing Loan Validation Rules")
 print("="*70)
 
 # Initialize validation engine
-engine = ValidationEngine(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml"))
+engine = ValidationEngine(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local-config.yaml"))
 
 # Test Case 1: Valid loan - should PASS both rules
 print("\n" + "="*70)

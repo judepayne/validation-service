@@ -1,3 +1,5 @@
+import sys
+import os
 import yaml
 from pathlib import Path
 from typing import List, Dict, Any
@@ -6,49 +8,58 @@ from .rule_executor import RuleExecutor
 from entity_helpers.version_registry import get_registry
 from entity_helpers import create_entity_helper
 
+# Add parent directory to Python path for rules module imports
+# This allows rules files to import from rules.base regardless of working directory
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_parent_dir = os.path.dirname(os.path.dirname(_current_dir))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
 
 class ValidationEngine:
     """Core validation business logic, independent of transport"""
 
     def __init__(self, config_path: str):
         """
-        Initialize validation engine with configuration.
+        Initialize validation engine with two-tier configuration.
 
         Args:
-            config_path: Path to config.yaml file
+            config_path: Path to local-config.yaml (tier 1) or config.yaml (legacy)
 
         Raises:
             FileNotFoundError: If config file doesn't exist
             yaml.YAMLError: If config file is malformed
             ValueError: If config is missing required keys or directories
         """
-        try:
-            with open(config_path) as f:
-                self.config = yaml.safe_load(f)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Config file not found: {config_path}. "
-                f"Create config.yaml or specify path."
-            )
-        except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML in {config_path}: {e}")
+        from .config_loader import ConfigLoader
+        from .rule_fetcher import RuleFetcher
 
-        # Validate required config keys
-        if 'master_rules_directory' not in self.config:
-            raise ValueError(
-                f"Config missing required key: 'master_rules_directory'. "
-                f"Check {config_path}"
-            )
+        # Load two-tier config
+        cache_dir = os.environ.get('VALIDATION_CACHE_DIR', '/tmp/validation-cache')
+        self.config_loader = ConfigLoader(config_path, cache_dir=cache_dir)
+        self.config = self.config_loader.get_business_config()
 
-        # Verify rules directory exists
-        rules_dir = Path(self.config['master_rules_directory'])
-        if not rules_dir.exists():
-            raise FileNotFoundError(
-                f"Rules directory not found: {rules_dir}. "
-                f"Check 'master_rules_directory' in {config_path}"
-            )
+        # Initialize rule fetcher
+        self.rule_fetcher = RuleFetcher(cache_dir=f"{cache_dir}/rules")
 
-        self.rule_loader = RuleLoader(self.config)
+        # Backward compatibility: support master_rules_directory (deprecated)
+        # If no rules_base_uri and no master_rules_directory, assume ../rules
+        if 'master_rules_directory' not in self.config and not self.config_loader.get_rules_base_uri():
+            self.config['master_rules_directory'] = '../rules'
+
+        # Verify rules directory exists (only for backward compat mode)
+        if 'master_rules_directory' in self.config:
+            rules_dir = Path(self.config['master_rules_directory'])
+            if not rules_dir.exists():
+                raise FileNotFoundError(
+                    f"Rules directory not found: {rules_dir}. "
+                    f"Check 'master_rules_directory' in config"
+                )
+
+        # Initialize rule loader with config and fetcher
+        self.rule_loader = RuleLoader(self.config, self.config_loader, self.rule_fetcher)
+
+        # Initialize entity helper registry
         get_registry(config_path)
 
     def get_required_data(self, entity_type: str, schema_url: str, ruleset_name: str) -> List[str]:

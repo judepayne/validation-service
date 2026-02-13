@@ -1,22 +1,20 @@
 (ns validation-service.api.routes
   (:require [validation-service.api.handlers :as handlers]
             [validation-service.api.schemas :as schemas]
-            [validation-service.runner.pods-client :as pods-client]
+            [validation-service.library.api :as lib]
             [reitit.ring :as ring]
             [reitit.swagger :as swagger]
             [reitit.swagger-ui :as swagger-ui]
             [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
             [clojure.tools.logging :as log]))
 
-(defn wrap-runner-client
-  "Middleware to inject runner client and config into request.
+(defn wrap-validation-service
+  "Middleware to inject ValidationService into request.
 
-  Adds :runner-client and :config to request map."
-  [handler runner-client config]
+  Adds :validation-service key to request map."
+  [handler validation-service]
   (fn [request]
-    (handler (assoc request
-                    :runner-client runner-client
-                    :config config))))
+    (handler (assoc request :validation-service validation-service))))
 
 (defn wrap-request-logging
   "Middleware to log incoming requests."
@@ -110,13 +108,14 @@
   "Create Ring handler with routes, Swagger UI, and middleware.
 
   Args:
-    config - Service configuration map
+    library-config - Library configuration map
 
   Returns:
     Ring handler function"
-  [config]
-  (let [;; Initialize runner client once
-        runner-client (pods-client/create-pods-client config)
+  [library-config]
+  ;; Create validation service from library config
+  (log/info "Creating validation service")
+  (let [validation-service (lib/create-service library-config)
 
         ;; Create router from route data
         router (ring/router (create-routes))
@@ -141,7 +140,7 @@
 
     ;; Apply middleware (bottom-up order)
     (-> app
-        (wrap-runner-client runner-client config)  ;; Inject dependencies
-        (wrap-json-response)                       ;; Serialize response :body to JSON
-        (wrap-json-body {:keywords? false})        ;; Parse JSON body (keep string keys)
+        (wrap-validation-service validation-service)  ;; Inject service
+        (wrap-json-response)                          ;; Serialize response :body to JSON
+        (wrap-json-body {:keywords? false})           ;; Parse JSON body (keep string keys)
         (wrap-request-logging))))                  ;; Log requests

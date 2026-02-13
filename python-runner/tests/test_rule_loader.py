@@ -4,12 +4,18 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Add parent directory to sys.path for rules imports
+parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from core.rule_loader import RuleLoader
 
 # Configuration for testing
+# Rules are now at project root, not in python-runner
 config = {
     "master_rules_directory": os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules"
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rules"
     )
 }
 

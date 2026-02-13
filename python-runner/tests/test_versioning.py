@@ -12,12 +12,17 @@ import json
 # Add python-runner to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Add parent directory to sys.path for rules imports
+parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from entity_helpers.version_registry import VersionRegistry, get_registry, reset_registry
 from entity_helpers.loan_v1 import LoanV1
 from entity_helpers.loan_v2 import LoanV2
 
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml")
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "local-config.yaml")
 
 
 def load_test_data(filename):

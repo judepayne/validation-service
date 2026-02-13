@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.validation_engine import ValidationEngine
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml")
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "local-config.yaml")
 
 LOAN_V1_DATA = {
     "$schema": "https://bank.example.com/schemas/loan/v1.0.0",

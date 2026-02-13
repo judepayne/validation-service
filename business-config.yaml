@@ -1,7 +1,15 @@
-# Python Runner Configuration
-# Defines rule sets for different validation scenarios
+# Business Configuration (Tier 2)
+# Business logic config - owned by rules team
+# Defines rulesets, rules, and schema mappings
 
-master_rules_directory: "./rules"
+# Optional: Base URI for rule files
+# If omitted, rules are loaded from relative paths (development mode)
+# For production, set to remote URI: "https://rules-repo.example.com/v2.1/rules"
+# rules_base_uri: "https://rules-repo.example.com/v2.1/rules"
+
+# Note: master_rules_directory is deprecated in favor of rules_base_uri
+# Kept for backward compatibility during transition
+# master_rules_directory: "../rules"
 
 # Quick rules - minimal validation (typically for real-time use)
 # Rules are assigned per schema version for version-specific validation

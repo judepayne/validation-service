@@ -93,7 +93,7 @@ helper = create_entity_helper("loan", entity_data, track_access=True)
 ```python
 from entity_helpers.version_registry import get_registry
 
-registry = get_registry("config.yaml")
+registry = get_registry("local-config.yaml")
 helper_class = registry.get_helper_class(entity_data, "loan")
 helper = helper_class(entity_data)
 ```
@@ -104,13 +104,13 @@ from entity_helpers.version_registry import reset_registry
 
 # Reset singleton between tests
 reset_registry()
-registry = VersionRegistry("test_config.yaml")
+registry = VersionRegistry("test_local-config.yaml")
 ```
 
 ## Adding New Schema Versions
 
 1. Create versioned helper class: `entity_helpers/loan_v3.py`
-2. Add mapping to `config.yaml`:
+2. Add mapping to `business-config.yaml`:
    ```yaml
    "https://bank.example.com/schemas/loan/v3.0.0": "loan_v3.LoanV3"
    ```
@@ -120,7 +120,7 @@ No code changes needed. Rules continue using stable logical properties.
 
 ## Key Design Principles
 
-- **Config-driven:** Version mappings in config.yaml, not hardcoded
+- **Config-driven:** Version mappings in business-config.yaml, not hardcoded
 - **Singleton pattern:** One registry per process, lazily initialized
 - **Minor version compatibility:** v1.1.0 data can use v1.0.0 helper
 - **Explicit major versions:** New major versions require explicit helper classes
@@ -144,8 +144,17 @@ class VersionRegistry:
     """Maps schema URLs to entity helper classes via config."""
 
     def __init__(self, config_path: str):
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
+        # Load config - handle two-tier configuration
+        import os
+        if 'local-config.yaml' in config_path or 'business_config_uri' in open(config_path).read():
+            # Two-tier config - use ConfigLoader
+            from core.config_loader import ConfigLoader
+            config_loader = ConfigLoader(config_path)
+            config = config_loader.get_business_config()
+        else:
+            # Single-tier config - load directly
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
 
         self._schema_map = config.get("schema_to_helper_mapping", {})
         self._default_helpers = config.get("default_helpers", {})

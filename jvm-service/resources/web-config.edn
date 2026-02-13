@@ -1,0 +1,33 @@
+;; Validation Service Web Configuration
+;; Configuration for HTTP/REST layer
+
+{:service
+ {:port 8080
+  :host "0.0.0.0"
+  :max_concurrent_validations 100
+  :request_timeout_ms 60000}
+
+ :cors
+ {:enabled true
+  :allowed_origins ["http://localhost:3000"]
+  :allowed_methods ["GET" "POST" "OPTIONS"]
+  :max_age 3600}
+
+ :logging
+ {:level "INFO"
+  :destination "../logs/validation-service.log"
+  :log_requests true
+  :log_rule_performance true
+  :format "json"
+  :include_thread_name true}
+
+ :monitoring
+ {:enabled true
+  :rule_performance_threshold_ms 100
+  :alert_on_threshold_exceeded true
+  :metrics_export_interval_ms 60000
+  :prometheus_enabled false
+  :health_check_path "/health"
+  :metrics_path "/metrics"}
+
+ :environment "development"}

@@ -32,7 +32,7 @@ _RUNNER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Start the runner process
 print("\n[1] Starting runner process...")
 proc = subprocess.Popen(
-    ['python3', os.path.join(_RUNNER_DIR, 'runner.py'), os.path.join(_RUNNER_DIR, 'config.yaml')],
+    ['python3', os.path.join(_RUNNER_DIR, 'runner.py'), os.path.join(_RUNNER_DIR, 'local-config.yaml')],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,

@@ -1,5 +1,20 @@
 # Validation Service Dockerfile
 # Multi-stage build for JVM service with Python runner
+#
+# Architecture:
+# - JVM Service: Library/Web split (Issue #1)
+#   - library-config.edn: Python runner, coordination service config
+#   - web-config.edn: HTTP server, CORS, logging config
+# - Python Runner: Two-tier configuration (Issue #2)
+#   - local-config.yaml: Infrastructure config (Tier 1)
+#   - business-config.yaml: Business logic config (Tier 2, can be remote)
+#   - rules/: Top-level rules directory (can be separate volume)
+#
+# Production Options:
+# - Mount business-config.yaml as ConfigMap or volume
+# - Mount rules/ directory from separate repository
+# - Set business_config_uri to remote URL (S3, HTTP)
+# - Set rules_base_uri to remote URL for rule fetching
 
 FROM clojure:temurin-21-tools-deps-bookworm AS builder
 
@@ -35,21 +50,42 @@ RUN apt-get update && \
 # Create application directory structure
 WORKDIR /app
 
+# Copy business configuration (Tier 2 - can be mounted in production)
+COPY business-config.yaml .
+
+# Copy rules directory (top-level - can be separate repo/volume in production)
+COPY rules/ rules/
+
 # Copy models directory (will be at /app/models)
 COPY models/ models/
 
-# Copy Python runner and its dependencies
+# Copy Python runner and its dependencies (includes local-config.yaml)
 COPY python-runner/ python-runner/
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir -r python-runner/requirements.txt
 
-# Copy JVM service files
-COPY jvm-service/config.edn jvm-service/
+# Copy JVM service files (resources includes library-config.edn and web-config.edn)
 COPY jvm-service/resources jvm-service/resources/
 
 # Copy the built uberjar from builder stage
 COPY --from=builder /build/jvm-service/target/validation-service-0.1.0-SNAPSHOT-standalone.jar jvm-service/validation-service.jar
+
+# Container directory structure:
+# /app/
+# ├── business-config.yaml          # Business logic config (Tier 2)
+# ├── rules/                         # Validation rules (top-level)
+# │   └── loan/, facility/, deal/
+# ├── models/                        # JSON schemas
+# ├── python-runner/
+# │   ├── local-config.yaml          # Infrastructure config (Tier 1)
+# │   ├── core/                      # Core modules (ConfigLoader, RuleFetcher, etc.)
+# │   └── ...
+# └── jvm-service/                   # WORKDIR
+#     ├── resources/
+#     │   ├── library-config.edn     # Library layer config
+#     │   └── web-config.edn         # Web layer config
+#     └── validation-service.jar
 
 # Set working directory to jvm-service (required for relative paths)
 WORKDIR /app/jvm-service

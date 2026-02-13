@@ -1,6 +1,5 @@
 (ns validation-service.api.handlers
-  (:require [validation-service.orchestration.workflow :as workflow]
-            [validation-service.utils.file-io :as file-io]
+  (:require [validation-service.utils.file-io :as file-io]
             [clojure.tools.logging :as log])
   (:import [java.time Instant LocalDateTime]
            [java.time.format DateTimeFormatter]))
@@ -43,10 +42,8 @@
   }
 
   Returns hierarchical validation results."
-  [{:keys [body] :as request}]
-  (let [runner-client (:runner-client request)  ;; Injected by middleware
-        config (:config request)               ;; Injected by middleware
-        entity-type (get body "entity_type")
+  [{:keys [body validation-service] :as request}]
+  (let [entity-type (get body "entity_type")
         entity-data (get body "entity_data")
         ruleset-name (get body "ruleset_name" "quick")]
 
@@ -56,11 +53,10 @@
                :entity-id (get entity-data "id")})
 
     (try
-      (let [results (workflow/execute-validation runner-client
-                                                config
-                                                entity-type
-                                                entity-data
-                                                ruleset-name)
+      (let [results (.validate validation-service
+                              entity-type
+                              entity-data
+                              ruleset-name)
             ;; Build summary
             total (count results)
             passed (count (filter #(= "PASS" (get % "status")) results))
@@ -113,10 +109,8 @@
   }
 
   Returns comprehensive rule metadata."
-  [{:keys [body] :as request}]
-  (let [runner-client (:runner-client request)
-        config (:config request)
-        entity-type (get body "entity_type")
+  [{:keys [body validation-service] :as request}]
+  (let [entity-type (get body "entity_type")
         schema-url (get body "schema_url")
         ruleset-name (get body "ruleset_name" "quick")]
 
@@ -126,11 +120,10 @@
                :ruleset ruleset-name})
 
     (try
-      (let [rules (workflow/execute-discover-rules runner-client
-                                                   config
-                                                   entity-type
-                                                   schema-url
-                                                   ruleset-name)]
+      (let [rules (.discover-rules validation-service
+                                  entity-type
+                                  schema-url
+                                  ruleset-name)]
 
         (json-response 200
                       {:entity_type entity-type
@@ -175,10 +168,8 @@
   }
 
   Returns batch validation results or file write confirmation."
-  [{:keys [body] :as request}]
-  (let [runner-client (:runner-client request)
-        config (:config request)
-        entities (get body "entities")
+  [{:keys [body validation-service] :as request}]
+  (let [entities (get body "entities")
         id-fields (get body "id_fields")
         ruleset-name (get body "ruleset_name" "quick")
         output-mode (get body "output_mode" "response")
@@ -212,11 +203,10 @@
                :id-fields-count (count id-fields)})
 
     (try
-      (let [results (workflow/execute-batch-validation runner-client
-                                                      config
-                                                      entities
-                                                      id-fields
-                                                      ruleset-name)
+      (let [results (.batch-validate validation-service
+                                    entities
+                                    id-fields
+                                    ruleset-name)
 
             ;; Calculate overall statistics
             total-entities (count results)
@@ -300,10 +290,8 @@
   }
 
   Returns batch validation results or file write confirmation."
-  [{:keys [body] :as request}]
-  (let [runner-client (:runner-client request)
-        config (:config request)
-        file-uri (get body "file_uri")
+  [{:keys [body validation-service] :as request}]
+  (let [file-uri (get body "file_uri")
         entity-types (get body "entity_types")
         id-fields (get body "id_fields")
         ruleset-name (get body "ruleset_name" "quick")
@@ -343,12 +331,11 @@
                :output-mode output-mode})
 
     (try
-      (let [results (workflow/execute-batch-file-validation runner-client
-                                                           config
-                                                           file-uri
-                                                           entity-types
-                                                           id-fields
-                                                           ruleset-name)
+      (let [results (.batch-file-validate validation-service
+                                         file-uri
+                                         entity-types
+                                         id-fields
+                                         ruleset-name)
 
             ;; Calculate overall statistics
             total-entities (count results)

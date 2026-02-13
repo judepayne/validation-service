@@ -1,0 +1,20 @@
+;; Validation Service Library Configuration
+;; Configuration for core validation logic (independent of HTTP layer)
+
+{:python_runner
+ {:executable "python3"
+  :script_path "../python-runner/runner.py"
+  :config_path "../python-runner/local-config.yaml"
+  :spawn_timeout_ms 5000
+  :validation_timeout_ms 30000
+  :pool_size 5
+  :pool_max_idle_ms 300000}
+
+ :coordination_service
+ {:base_url "http://localhost:8081"
+  :timeout_ms 5000
+  :retry_attempts 3
+  :retry_delay_ms 1000
+  :circuit_breaker_enabled true
+  :failure_threshold 5
+  :reset_timeout_ms 60000}}
