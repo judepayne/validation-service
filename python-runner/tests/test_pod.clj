@@ -23,7 +23,7 @@
 (try
   (let [result (pods/invoke "pod.validation-runner" 'get-required-data
                             {:entity_type "loan"
-                             :schema_url "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+                             :schema_url "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
                              :ruleset_name "quick"})]
     (println "✓ Result received:" result)
     (println "✓ Required data:" result)
@@ -41,7 +41,7 @@
 (try
   (let [result (pods/invoke "pod.validation-runner" 'validate
                             {:entity_type "loan"
-                             :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+                             :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
                                            :id "LOAN-12345"
                                            :loan_number "LN-001"
                                            :facility_id "FAC-100"
@@ -76,7 +76,7 @@
 (try
   (let [result (pods/invoke "pod.validation-runner" 'validate
                             {:entity_type "loan"
-                             :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+                             :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
                                            :id "LOAN-99999"
                                            :loan_number "LN-002"
                                            :facility_id "FAC-999"

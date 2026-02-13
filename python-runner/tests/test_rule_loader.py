@@ -3,20 +3,16 @@
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Add parent directory to sys.path for rules imports
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Add logic/ directory to sys.path for entity_helpers and rules imports
+logic_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logic")
+sys.path.insert(0, logic_dir)
 
 from core.rule_loader import RuleLoader
 
 # Configuration for testing
-# Rules are now at project root, not in python-runner
+# Rules live in logic/rules/
 config = {
-    "master_rules_directory": os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "rules"
-    )
+    "master_rules_directory": os.path.join(logic_dir, "rules")
 }
 
 # Test rule loading with ID injection

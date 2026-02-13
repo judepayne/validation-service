@@ -5,6 +5,8 @@ import os
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add logic/ directory to sys.path for entity_helpers and rules imports
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logic"))
 
 from core.validation_engine import ValidationEngine
 

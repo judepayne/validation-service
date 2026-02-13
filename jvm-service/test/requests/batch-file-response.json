@@ -1,10 +1,10 @@
 {
   "file_uri": "file:./test/test-data/loans.json",
   "entity_types": {
-    "file://../../models/loan.schema.v1.0.0.json": "loan"
+    "file://../../logic/models/loan.schema.v1.0.0.json": "loan"
   },
   "id_fields": {
-    "file://../../models/loan.schema.v1.0.0.json": "loan_number"
+    "file://../../logic/models/loan.schema.v1.0.0.json": "loan_number"
   },
   "ruleset_name": "quick",
   "output_mode": "response"

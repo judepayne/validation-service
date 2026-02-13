@@ -4,7 +4,7 @@
 
 # URI to business config (tier 2)
 # Supports: relative paths, file:// (absolute), http://, https://
-business_config_uri: "../business-config.yaml"
+business_config_uri: "../logic/business-config.yaml"
 
 # Optional: Cache directory for remote configs and rules
 # Default: /tmp/validation-cache

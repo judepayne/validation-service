@@ -123,13 +123,3 @@
     (log/info "Validation service library initialized")
     (->ValidationServiceImpl runner-client config)))
 
-(defn shutdown-service
-  "Shut down ValidationService and cleanup resources.
-
-  Currently a no-op (pods don't need explicit cleanup), but provides
-  hook for future resource management.
-
-  Args:
-    service - ValidationService instance"
-  [service]
-  (log/info "Shutting down validation service library"))

@@ -54,7 +54,7 @@ request_1 = {
     b'var': b'get_required_data',
     b'args': {
         b'entity_type': b'loan',
-        b'schema_url': b'file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json',
+        b'schema_url': b'file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json',
         b'mode': b'inline'
     }
 }
@@ -100,7 +100,7 @@ request_2 = {
     b'args': {
         b'entity_type': b'loan',
         b'entity_data': {
-            b'$schema': b'file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json',
+            b'$schema': b'file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json',
             b'id': b'LOAN-99999',
             b'loan_number': b'LN-VALID-001',
             b'facility_id': b'FAC-100',
@@ -190,7 +190,7 @@ request_3 = {
     b'args': {
         b'entity_type': b'loan',
         b'entity_data': {
-            b'$schema': b'file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json',
+            b'$schema': b'file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json',
             b'id': b'LOAN-88888',
             b'loan_number': b'LN-INVALID-001',
             b'facility_id': b'FAC-999',

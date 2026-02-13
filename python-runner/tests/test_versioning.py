@@ -12,10 +12,10 @@ import json
 # Add python-runner to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Add parent directory to sys.path for rules imports
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Add logic/ directory to sys.path for rules imports
+logic_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logic")
+if logic_dir not in sys.path:
+    sys.path.insert(0, logic_dir)
 
 from entity_helpers.version_registry import VersionRegistry, get_registry, reset_registry
 from entity_helpers.loan_v1 import LoanV1
@@ -158,7 +158,7 @@ def run_tests():
         v2_data = load_test_data("loan_v2_valid.json")
         # Override schema to claim it's v1 to test cross-version failure
         v2_data_claiming_v1 = dict(v2_data)
-        v2_data_claiming_v1["$schema"] = "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+        v2_data_claiming_v1["$schema"] = "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
 
         rule = Rule("rule_001_v1")
         rule.entity = LoanV1(v2_data_claiming_v1)

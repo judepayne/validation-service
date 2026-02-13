@@ -5,6 +5,7 @@
 **POC Enhancements (Completed - February 2026):**
 - ✅ **Library/Web Split** (Issue #1): JVM service separated into reusable library layer and HTTP web layer
 - ✅ **Two-Tier Configuration** (Issue #2): Infrastructure config separate from business logic, supports remote rule fetching
+- ✅ **Remote Logic Package**: Entire `logic/` folder servable from remote URL via `LogicPackageFetcher`, no manifest needed
 
 ---
 
@@ -124,11 +125,11 @@
 ### 6. Configuration Management
 
 **Current Architecture (Issue #2 - Implemented):**
-- ✅ **Two-tier configuration:** Infrastructure (`local-config.yaml`) separate from business logic (`business-config.yaml`)
+- ✅ **Two-tier configuration:** Infrastructure (`local-config.yaml`) separate from business logic (`logic/business-config.yaml`)
 - ✅ **Remote config support:** URI-based fetching (file://, http://, https://)
 - ✅ **Caching:** Remote configs and rules cached with SHA256 keys
 - ✅ **Separation of concerns:** Service team owns infrastructure, rules team owns business logic
-- ✅ **Rules repository:** Top-level `rules/` directory can be separate repository
+- ✅ **Rules repository:** `logic/` directory (rules, models, business config) can be separate repository
 
 **Production Enhancements:**
 - [ ] Externalize config URIs (Spring Cloud Config / Consul / AWS Parameter Store)
@@ -139,15 +140,15 @@
 - [ ] Environment-specific URIs (dev/staging/prod)
   ```yaml
   # local-config.yaml
-  business_config_uri: "${BUSINESS_CONFIG_URI:../business-config.yaml}"
+  business_config_uri: "${BUSINESS_CONFIG_URI:../logic/business-config.yaml}"
   rules_cache_dir: "${CACHE_DIR:/var/cache/validation-rules}"
   ```
 - [ ] Config validation on startup (schema validation for both tiers)
-- [ ] Version control for production configs (business-config.yaml in separate repo)
-- [ ] Remote rule storage (S3, Azure Blob, HTTP server)
+- [ ] Version control for production configs (logic/ directory in separate repo)
+- [x] Remote logic package fetching (LogicPackageFetcher — implemented)
   ```yaml
-  # business-config.yaml (production)
-  rules_base_uri: "https://rules-cdn.example.com/v2.1/rules"
+  # local-config.yaml (production) — one URI change, everything served remotely
+  business_config_uri: "https://rules-cdn.example.com/prod/logic/business-config.yaml"
   ```
 
 **Benefits of POC Architecture:**
@@ -155,6 +156,58 @@
 - Infrastructure/business separation enables independent deployment
 - Rules team can deploy new rules without touching service
 - Different environments can point to different rule versions
+
+---
+
+### 6b. Moving `logic/` to a Remote Location
+
+**Status:** Infrastructure implemented (LogicPackageFetcher). Ready for deployment configuration.
+
+The optimal production topology is to serve the `logic/` folder from a remote, reachable location — an S3 bucket, a CDN, an internal HTTP server, or an artifact repository. This fully decouples the rules team's release cycle from the service team's.
+
+**What changes:**
+```yaml
+# local-config.yaml — the ONLY change to the service
+business_config_uri: "https://rules-cdn.example.com/prod/logic/business-config.yaml"
+```
+
+The `LogicPackageFetcher` handles everything else: it reads the remote business config, derives the complete file list from it (rules, entity helpers, structural files), fetches each file into a local cache mirroring the `logic/` directory structure, and configures `sys.path` to point at the cache. No manifest file is needed.
+
+**Why this is safe — the immutability contract:**
+
+The entire approach rests on the fact that rules, entity helpers, and model schemas are **immutable versioned artifacts**:
+
+| Asset | Example | Mutability |
+|-------|---------|------------|
+| Rules | `rules/loan/rule_001_v1.py` | Immutable — changes ship as `rule_001_v2.py` |
+| Entity helpers | `entity_helpers/loan_v1.py` | Immutable — new schema version = new helper file |
+| Model schemas | `models/loan.schema.v1.0.0.json` | Immutable — breaking changes = new major version |
+| Business config | `business-config.yaml` | **Mutable** — the routing layer that selects active versions |
+
+Because rule/helper files never change once published, they can be cached indefinitely. Only `business-config.yaml` needs freshness checks, and it's a small YAML file. The rules team "deploys" by editing business-config.yaml to activate new rule versions, update helper mappings, or reorganize rulesets — then publishing the updated `logic/` folder to the remote location.
+
+**Recommended hosting options:**
+
+| Option | Pros | Cons |
+|--------|------|------|
+| S3 + CloudFront | Cheap, fast, versioned, familiar | Requires AWS |
+| Internal HTTP server (Nginx) | Simple, no cloud dependency | Manage availability |
+| Artifact repository (Nexus, Artifactory) | Audit trail, access control | Heavier infrastructure |
+| Git-based (raw.githubusercontent.com or GitLab pages) | Already version-controlled | Rate limits, public exposure risk |
+
+**Deployment workflow:**
+1. Rules team edits files in the `logic/` git repository
+2. CI pipeline validates (lint rules, run tests against sample data)
+3. CI publishes `logic/` contents to the remote location (e.g., `aws s3 sync logic/ s3://rules-bucket/prod/logic/`)
+4. Service picks up changes on next startup (or via hot reload, if implemented)
+
+**Checklist:**
+- [x] `LogicPackageFetcher` implemented — handles local/remote detection, file derivation, fetching, caching
+- [ ] Choose hosting location (S3, CDN, HTTP server)
+- [ ] Set up CI pipeline for `logic/` repository to publish on merge
+- [ ] Configure production `local-config.yaml` with remote URI
+- [ ] Add cache TTL or invalidation strategy for `business-config.yaml`
+- [ ] Consider hot reload (watch for config changes, re-fetch logic package)
 
 ---
 
@@ -256,7 +309,7 @@
 - Supports: Relative paths, file://, http://, https:// URIs
 
 **Tier 2: Business Configuration**
-- File: `business-config.yaml` (can be in separate repository)
+- File: `logic/business-config.yaml` (can be in separate repository)
 - Owned by: Rules team
 - Contains: Rule sets, schema mappings, rules base URI
 - Supports: Remote rule fetching with URI-based paths
@@ -271,7 +324,7 @@
 - **Independent Versioning:** Rules versioned and deployed separately from service
 - **Remote Fetching:** Rules can be stored in artifact repositories (S3, HTTP servers)
 - **Environment Flexibility:** Dev uses local paths, production uses remote URIs
-- **Rules Repository:** Top-level `rules/` directory can be separate git repository
+- **Rules Repository:** `logic/` directory (rules, models, business config) can be separate git repository
 
 **Production Deployment Example:**
 ```yaml
@@ -279,7 +332,7 @@
 business_config_uri: "https://rules-cdn.example.com/prod/business-config.yaml"
 rule_cache_dir: "/var/cache/validation-rules"
 
-# business-config.yaml (hosted remotely, owned by rules team)
+# logic/business-config.yaml (hosted remotely, owned by rules team)
 rules_base_uri: "https://rules-cdn.example.com/prod/rules"
 quick_rules:
   "https://bank.example.com/schemas/loan/v1.0.0":
@@ -334,6 +387,7 @@ quick_rules:
 | Single persistent pod | ✅ Works | Add pod pooling for >100 req/sec workloads |
 | Two-tier config | ✅ Implemented (Issue #2) | **Keep** - Enables remote rules, supports production deployment |
 | URI-based rule fetching | ✅ Implemented (Issue #2) | **Keep** - Already production-ready with caching |
+| Remote logic package | ✅ Implemented | **Keep** - Point `business_config_uri` to CDN, entire logic/ served remotely |
 | Library/Web split | ✅ Implemented (Issue #1) | **Keep** - Simplifies migration and enables reusability |
 | JSON Schema | ✅ Works | Keep, add schema registry |
 | Relative paths | ✅ Works | Keep, already container-ready |

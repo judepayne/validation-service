@@ -30,7 +30,8 @@ def create_entity_helper(entity_type: str, entity_data: dict,
     """
     import os
     # Auto-initialize registry from default config if not already done
-    default_config = os.path.join(os.path.dirname(__file__), "..", "local-config.yaml")
+    # entity_helpers lives in logic/, config is at python-runner/local-config.yaml
+    default_config = os.path.join(os.path.dirname(__file__), "..", "..", "python-runner", "local-config.yaml")
     registry = get_registry(default_config if os.path.exists(default_config) else None)
     helper_class = registry.get_helper_class(entity_data, entity_type)
     return helper_class(entity_data, track_access=track_access)

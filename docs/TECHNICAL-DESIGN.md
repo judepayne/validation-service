@@ -2,112 +2,35 @@
 
 ## Document Purpose
 
-This document describes the technical architecture and implementation design for the commercial bank loan validation service. It is intended for software engineers, architects, and technical stakeholders.
+This document describes the technical architecture and implementation of the validation service POC. It is intended for software engineers, architects, and technical stakeholders who need to understand, maintain, or productionize the system.
 
-For functional requirements and business context, refer to DESIGN.md.
+For functional requirements and business context, see [DESIGN-OVERVIEW.md](../DESIGN-OVERVIEW.md).
+For production migration planning, see [PRODUCTIONIZATION.md](PRODUCTIONIZATION.md).
 
-## Implementation Phases
+---
 
-The implementation follows two phases:
+## 1. System Overview
 
-**Phase 1 - POC/Prototype:**
-- JVM Service: Clojure
-- Rule Runner: Python
-- Communication: Babashka pods (bencode protocol)
-- Data Model: JSON Schema validated using Python `jsonschema` library
-- Schema Storage: Local `models/` folder (versioned alongside code)
-- Packaging: Docker container (single image with Clojure + Python)
-- Goal: Validate architecture and prove performance characteristics
+The validation service validates business data (deals, facilities, loans) against configurable rule sets. It uses a two-component architecture: a **JVM orchestration service** (Clojure) coordinating a **Python validation engine** via the babashka pods protocol.
 
-**Phase 2 - Production/Enterprise:**
-- JVM Service: Java (Spring Boot or similar)
-- Rule Runner: Python (unchanged)
-- Communication: Bencode or gRPC (to be determined based on POC learnings)
-- Data Model: To be determined (likely JSON Schema, but other options like Pydantic or Protocol Buffers may be considered)
-- Packaging: Docker container with orchestration (Kubernetes, Docker Swarm, or cloud-native)
-- Goal: Production-ready with enterprise tooling and support
+### Implementation Phases
 
-## Key Design Principles
+**Phase 1 - POC (Current, Complete):**
+- JVM Service: Clojure with Ring/Reitit
+- Rule Engine: Python 3.10+
+- Communication: Babashka pods (bencode over stdin/stdout)
+- Data Model: JSON Schema
+- Packaging: Docker container
 
-### Transport Layer Abstraction
+**Phase 2 - Production:**
+- JVM Service: Java (Spring Boot)
+- Rule Engine: Python (unchanged)
+- Communication: gRPC (or retained bencode, based on performance needs)
+- See [PRODUCTIONIZATION.md](PRODUCTIONIZATION.md) for the migration roadmap
 
-**Principle:** Both JVM and Python implementations abstract the transport/communication layer behind well-defined interfaces (Clojure protocols / Java interfaces / Python abstract base classes).
+---
 
-**Rationale:**
-- Enable seamless migration between communication protocols (pods → gRPC)
-- Support gradual transition or A/B testing of different transports
-- Allow business logic to be tested independently of transport mechanism
-- Simplify future enhancements (e.g., adding HTTP/REST or message queue support)
-
-**Implementation:**
-- **JVM Side:** `ValidationRunnerClient` protocol/interface with pluggable implementations (`PodsRunnerClient`, `GrpcRunnerClient`)
-- **Python Side:** `TransportHandler` abstract base class with pluggable implementations (`PodsTransportHandler`, `GrpcTransportHandler`)
-- **Core Logic:** Validation orchestration and rule execution logic have zero dependencies on specific transports
-
-**Benefits:**
-- POC can use simple babashka pods without committing to it long-term
-- Migration decisions can be deferred until performance requirements are validated
-- Transport changes require minimal code modifications
-- Clear boundaries enable parallel development (transport vs. business logic)
-
-See the "Communication Protocol" and "Transport Abstraction Layer" sections for detailed implementation examples.
-
-### Data Model Abstraction
-
-**Principle:** Validation rules do not access entity data (deal, facility, loan) directly via raw JSON/dict structures. Instead, they use typed helper classes that provide stable getter methods for data extraction.
-
-**Rationale:**
-- The enterprise data model for deals, facilities, and loans evolves under change control
-- Model restructuring (field renaming, nesting changes, data type changes) is common
-- Direct JSON access couples rules tightly to model structure
-- Model changes would require updating all rules that access modified fields
-- Abstraction layer isolates rules from structural changes
-
-**Implementation:**
-- **Python Helper Classes:** `Loan`, `Facility`, `Deal` classes wrap raw entity data
-- **Stable Interface:** Helper classes provide getter methods (e.g., `loan.amount`, `facility.limit`)
-- **Model Changes:** Only helper classes updated when model structure changes
-- **New Fields:** Helper classes extended when new data added to model (for new rules)
-- **Rules Unchanged:** Existing rules continue working when model restructured
-
-**Example Without Abstraction (Fragile):**
-```python
-# Direct JSON access - breaks when model changes
-loan_amount = self.entity_data.get("amount")
-currency = self.entity_data.get("currency")
-maturity = self.entity_data.get("maturityDate")
-
-# What if model changes to nested structure?
-# loan_amount = self.entity_data.get("financial").get("principalAmount")
-# All rules must be updated!
-```
-
-**Example With Abstraction (Robust):**
-```python
-# Helper class provides stable interface
-loan_amount = self.loan.amount
-currency = self.loan.currency
-maturity = self.loan.maturity_date
-
-# Model restructured? Only helper class updated:
-# class LoanV1:
-#     @property
-#     def amount(self):
-#         return self.data.get("financial", {}).get("principalAmount")
-# Rules remain unchanged!
-```
-
-**Benefits:**
-- **Decoupling:** Rules isolated from model structure changes
-- **Maintainability:** Model evolution doesn't break existing rules
-- **Readability:** `loan.amount` clearer than `entity_data.get("amount")`
-- **Type Safety:** Helper classes can provide type hints for IDE support
-- **Computed Properties:** Helper can expose derived/calculated fields
-- **Validation:** Helper can enforce data access patterns
-
-See the "Entity Helper Classes" section for detailed implementation.
-
-## System Architecture
+## 2. Architecture
 
 ### High-Level Components
 
@@ -116,550 +39,246 @@ See the "Entity Helper Classes" section for detailed implementation.
            │   Client    │
            │   Systems   │
            └──────┬──────┘
-                  │
                   │ HTTP/REST
                   │
 ┌─────────────────▼──────────────────────────────┐
 │                                                │
 │       JVM Orchestration Service                │
-│           (Clojure → Java)                     │
+│           (Clojure POC → Java)                 │
 │                                                │
-│  ┌───────────────────────────────────────┐     │
-│  │  Spawn & Manage Python Runner Process │     │
-│  └───────────────────────────────────────┘     │
-│                                                │
-└─────┬─────────────────────┬────────────────────┘
-      │                     │
-      │ Bencode/Pods        │ HTTP/REST
-      │                     │
-┌─────▼──────────┐   ┌──────▼────────-──────┐
-│                │   │                      │
-│  Python Rule   │   │  Coordination        │
-│    Runner      │   │    Service           │
-│                │   │    (External)        │
-│  ┌──────────┐  │   │                      │
-│  │  Rules   │  │   │  Provides additional │
-│  │          │  │   │  data for validation │
-│  │ • loan/  │  │   │                      │
-│  │ • fac... │  │   └──────────────────────┘
-│  │ • deal/  │  │
-│  └──────────┘  │
-│                │
-└────────────────┘
+│  ┌────────────────┐   ┌─────────────────────┐  │
+│  │  Web Layer     │   │   Library Layer     │  │
+│  │  (Ring/Reitit) │──▶│   (Core Logic)      │  │
+│  └────────────────┘   └──────────┬──────────┘  │
+│                                  │             │
+└──────────────────────────────────┼─────────────┘
+              │                    │
+              │ HTTP/REST          │ Bencode/Pods
+              │                    │
+   ┌──────────▼──────────┐   ┌────▼────────────┐
+   │  Coordination       │   │  Python Rule     │
+   │  Service            │   │  Runner          │
+   │  (External, stub)   │   │                  │
+   │                     │   │  ┌────────────┐  │
+   │  Provides related   │   │  │ Rules      │  │
+   │  data for rules     │   │  │ • loan/    │  │
+   └─────────────────────┘   │  │ • fac.../  │  │
+                             │  │ • deal/    │  │
+                             │  └────────────┘  │
+                             └──────────────────┘
 ```
 
-### Component Responsibilities
+### Separation of Concerns
 
-**JVM Orchestration Service:**
-- Expose REST API for inline and batch validation (`/api/v1/validate`, `/api/v1/batch`, `/api/v1/batch-file`)
-- Orchestrate two-phase validation workflow
-- **Single persistent Python runner pod** - Created at service startup, reused for all requests
-- Call coordination service to fetch required data (currently stubbed)
-- Aggregate and return validation results
-- Support flexible output modes (HTTP response or file output)
-- Normalize relative file:// URIs to absolute paths for Python compatibility
-- Monitor and log performance metrics
+| Concern | JVM Service | Python Runner |
+|---------|-------------|---------------|
+| REST API | Owns | None |
+| Workflow orchestration | Owns | None |
+| Process management | Owns | None |
+| External data fetching | Owns | None |
+| Validation logic | None | Owns |
+| Rule loading & execution | None | Owns |
+| Data model knowledge | Opaque passthrough | Entity helpers |
+| Transport protocol | Abstracted | Abstracted |
 
-**Python Rule Runner:**
-- **Rule-set agnostic execution engine** - executes named rule sets without semantic knowledge
-- Load configuration defining named rule sets (e.g., "quick_rules", "thorough_rules", "audit_rules")
-- Discover and dynamically load rule classes
-- Expose functions via pod interface:
-  - `get_required_data(entity_type, schema_url, ruleset_name)`: Introspect rules and return needed data
-  - `validate(entity_type, entity_data, ruleset_name, required_data)`: Execute rules and return hierarchical results
-  - `discover_rules(entity_type, entity_data, ruleset_name)`: Return comprehensive rule metadata
-- Execute rules sequentially, respecting hierarchy
-- Cache entity and required data during execution
-- Handle rule execution errors gracefully
+The JVM service is the **coordinator** ("get me a validation result"). The Python runner is the **engine** ("here is how to validate"). Neither knows the other's internals; they communicate through a well-defined protocol.
 
-**Architectural Separation:**
-- JVM Service: Controls **when** (inline/batch mode) and **which rule set** to use
-- Python Runner: Executes the specified rule set, agnostic to JVM orchestration mode
-- Example: JVM inline mode → passes `ruleset_name="quick"` for real-time validation
-- Example: JVM batch mode → passes `ruleset_name="thorough"` for comprehensive validation
+---
 
-**Coordination Service (External):**
-- Provide additional data required by validation rules
-- Support queries by vocabulary terms (parent, all_siblings, etc.)
-- Return structured data for hierarchical and related entities
+## 3. Project Structure
 
-### Library + Web Wrapper Architecture
-
-**Issue:** [GitHub Issue #1](https://github.com/judepayne/validation-service/issues/1)
-
-The JVM service is structured in two layers to separate reusable validation logic from HTTP transport concerns:
+Understanding the directory layout is essential context for the sections that follow.
 
 ```
-┌──────────────────────────────────────────────────────┐
-│              Web Layer (HTTP/REST)                   │
-│                                                      │
-│  ┌────────────┐  ┌────────────┐  ┌──────────────┐  │
-│  │  Handlers  │  │   Routes   │  │ Jetty Server │  │
-│  └─────┬──────┘  └────────────┘  └──────────────┘  │
-│        │                                            │
-│        │ ValidationService protocol calls           │
-│        ▼                                            │
-│  ┌────────────────────────────────────────────┐    │
-│  │   ValidationService Protocol Interface     │    │
-│  │   • validate(entity-type, data, ruleset)   │    │
-│  │   • discover-rules(...)                    │    │
-│  │   • batch-validate(...)                    │    │
-│  │   • batch-file-validate(...)               │    │
-│  └────────────────────────────────────────────┘    │
-└─────────────────────┬────────────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────────────┐
-│            Library Layer (Core Logic)                │
-│                                                      │
-│  ┌────────────────────────────────────────────┐    │
-│  │   ValidationServiceImpl (record)           │    │
-│  │   Holds: runner-client, config             │    │
-│  └─────┬──────────────────────────────────────┘    │
-│        │                                            │
-│        │ Delegates to workflow functions            │
-│        ▼                                            │
-│  ┌────────────────────────────────────────────┐    │
-│  │   Workflow Orchestration                   │    │
-│  │   • execute-validation                     │    │
-│  │   • execute-discover-rules                 │    │
-│  │   • execute-batch-validation               │    │
-│  │   • execute-batch-file-validation          │    │
-│  └─────┬──────────────────────────────────────┘    │
-│        │                                            │
-│        │ Uses runner protocol                       │
-│        ▼                                            │
-│  ┌────────────────────────────────────────────┐    │
-│  │   ValidationRunnerClient Protocol          │    │
-│  │   Implementation: pods-client              │    │
-│  └────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────┘
+validation-service/
+├── README.md
+├── DESIGN-OVERVIEW.md
+├── Dockerfile
+│
+├── logic/                                 # Business-owned assets (rules team)
+│   ├── business-config.yaml               #   Tier 2: Business configuration
+│   ├── models/                            #   JSON Schemas
+│   │   ├── loan.schema.v1.0.0.json
+│   │   └── loan.schema.v2.0.0.json
+│   ├── rules/                             #   Rule implementations
+│   │   ├── base.py                        #     ValidationRule ABC
+│   │   └── loan/
+│   │       ├── rule_001_v1.py             #     JSON Schema validation
+│   │       ├── rule_002_v1.py             #     Financial soundness
+│   │       ├── rule_003_v1.py             #     Status validation
+│   │       └── rule_004_v1.py             #     Balance constraints
+│   └── entity_helpers/                    #   Data model abstraction
+│       ├── __init__.py                    #     create_entity_helper factory
+│       ├── version_registry.py            #     Schema URL → helper routing
+│       ├── loan_v1.py                     #     LoanV1 for schema v1.0.0
+│       └── loan_v2.py                     #     LoanV2 for schema v2.0.0
+│
+├── docs/
+│   ├── TECHNICAL-DESIGN.md
+│   ├── TECHNICAL-DESIGN.md                # This document
+│   ├── CAPABILITIES.md
+│   ├── HOW-VERSIONING-WORKS.md
+│   ├── POD-VS-GRPC.md
+│   ├── LIBRARY-USAGE.md
+│   └── PRODUCTIONIZATION.md
+│
+├── python-runner/
+│   ├── runner.py                          # Entry point (pod protocol loop)
+│   ├── local-config.yaml                  # Tier 1: Infrastructure config
+│   ├── requirements.txt
+│   ├── core/
+│   │   ├── validation_engine.py
+│   │   ├── rule_executor.py
+│   │   ├── rule_loader.py
+│   │   ├── config_loader.py
+│   │   ├── rule_fetcher.py
+│   │   └── logic_fetcher.py          # Remote logic package fetching
+│   ├── transport/
+│   │   ├── base.py
+│   │   ├── pods_transport.py
+│   │   ├── bencode_reader.py
+│   │   └── case_conversion.py
+│   └── tests/
+│       └── ...
+│
+├── jvm-service/
+│   ├── deps.edn
+│   ├── build.clj
+│   ├── resources/
+│   │   ├── library-config.edn
+│   │   ├── web-config.edn
+│   │   └── logback.xml
+│   ├── src/validation_service/
+│   │   ├── core.clj
+│   │   ├── config.clj
+│   │   ├── library/api.clj
+│   │   ├── api/{routes,handlers,schemas}.clj
+│   │   ├── orchestration/{workflow,coordination}.clj
+│   │   ├── runner/{protocol,pods_client}.clj
+│   │   └── utils/file_io.clj
+│   └── test/
+│       └── ...
+│
+└── sample-data/
+    └── single-examples/loan1.json
 ```
 
-**Library Layer** (`validation-service.library.*`):
-- **Public API:** `ValidationService` protocol with methods for validation operations
-- **Implementation:** `ValidationServiceImpl` record holding runner-client and config
-- **Initialization:** `create-service` and `shutdown-service` functions
-- **Internal:** Workflow orchestration, runner protocol, utilities
-- **Configuration:** `library-config.edn` with `:python_runner` and `:coordination_service`
-- **Returns:** Raw data structures (maps/vectors) - no HTTP dependencies
+### The `logic/` Folder
 
-**Web Layer** (`validation-service.api.*`, `core.clj`):
-- **Handlers:** HTTP request handlers that call protocol methods and wrap results in Ring responses
-- **Routes:** Reitit route definitions with Swagger documentation
-- **Schemas:** OpenAPI/Swagger schemas for API documentation
-- **Server:** Jetty server startup and lifecycle management
-- **Configuration:** `web-config.edn` with `:service`, `:cors`, `:logging`, `:monitoring`
-- **Middleware:** Injects ValidationService into request context
+The `logic/` directory consolidates all business-owned assets: the business configuration, rule implementations, entity helpers, and data model schemas. This is a deliberate **layer of indirection** — the Python runner's `local-config.yaml` (Tier 1) points to `logic/business-config.yaml` (Tier 2) via `business_config_uri`, which in turn references rules and schemas within `logic/`.
 
-**Benefits:**
+This indirection means the entire `logic/` folder could live in a separate repository, be mounted from a different location, or be fetched from a remote CDN. The service code has no hardcoded knowledge of what's inside `logic/`; it discovers everything through the configuration chain. In production, the rules team owns `logic/` and the service team owns everything else — the two can be versioned and deployed independently.
 
-1. **Reusability:** Library can be embedded in other JVM applications:
-   - Batch jobs validating large datasets
-   - Streaming pipelines with inline validation
-   - Other services requiring validation logic
-   - Direct testing of validation without HTTP layer
+#### Immutability Model
 
-2. **Separation of Concerns:**
-   - Business logic isolated from transport layer
-   - Protocol methods return data, handlers add HTTP semantics
-   - Library has zero Ring/Reitit/Jetty dependencies
-   - Clear boundaries between layers
+The architecture relies on a strict immutability contract for the files inside `logic/`:
 
-3. **Testing:**
-   - Core logic testable without starting HTTP server
-   - Protocol methods can be tested with test doubles
-   - Integration tests can use library directly
+**Immutable (never edited in place):**
+- **Rules** (`rules/loan/rule_001_v1.py`) — a rule file, once published, is frozen. Changes are published as new versions (`rule_001_v2.py`) with corresponding updates to business-config.yaml.
+- **Entity helpers** (`entity_helpers/loan_v1.py`) — a helper maps logical properties to a specific schema version's physical fields. When the schema evolves, a new helper is created (`loan_v2.py`), never a modified `loan_v1.py`.
+- **Model schemas** (`models/loan.schema.v1.0.0.json`) — schemas are versioned artifacts. A published schema is immutable; breaking changes produce a new major version.
 
-4. **Migration Path:**
-   - Library layer migrates cleanly to Java (protocol → interface, record → class)
-   - Library becomes standalone JAR (service beans in Spring)
-   - Web layer becomes Spring Boot controllers
-   - Gradual migration with both layers coexisting
+**Mutable (the routing layer):**
+- **Business config** (`business-config.yaml`) — this is the single file that *is* allowed to change in place. It controls which rules are active, which schema versions map to which helpers, and how rulesets are composed. Editing it is how the rules team "deploys": add a new rule version to a ruleset, point a schema to a new helper, or reorganize rule hierarchies.
 
-**Usage Example:**
+This division makes the system safe for remote serving and caching. Immutable files can be cached aggressively (or indefinitely) — their content never changes for a given filename. The business config is the only file that needs freshness checks, and it's small (a few KB of YAML). Since the entire `logic/` folder is typically in a git repository, changes to business-config.yaml are tracked, reviewed, and auditable just like code changes.
+
+#### Local vs Remote Serving
+
+The `LogicPackageFetcher` (in `python-runner/core/logic_fetcher.py`) determines how to serve `logic/` at startup based on the `business_config_uri` in local-config.yaml:
+
+| `business_config_uri` | Mode | Behavior |
+|------------------------|------|----------|
+| `../logic/business-config.yaml` | Local | Resolve to absolute directory, use directly. No fetching, no caching. This is the development workflow. |
+| `https://cdn.example.com/logic/business-config.yaml` | Remote | Parse the config, derive all required file paths, fetch each into a local cache mirroring `logic/`, use cache as `logic_dir`. |
+
+**No manifest file is needed.** The business config already enumerates everything: rule IDs in `*_rules` sections map to rule files, helper class references in `schema_to_helper_mapping` map to helper files, and a small set of structural files (`rules/base.py`, `entity_helpers/__init__.py`, `entity_helpers/version_registry.py`) are always included. The `LogicPackageFetcher.derive_required_files()` method parses the config and produces the complete file list.
+
+The base URI is computed by stripping the filename from `business_config_uri` — if the config is at `https://cdn.example.com/logic/business-config.yaml`, then rules are at `https://cdn.example.com/logic/rules/loan/rule_001_v1.py`. No additional configuration key is required.
+
+In the cached directory, the structure mirrors `logic/` exactly, so `sys.path` points at the cache root and all imports (`from rules.base import ValidationRule`, `from entity_helpers import create_entity_helper`) work unchanged.
+
+---
+
+## 4. JVM Service Architecture
+
+### Library + Web Split
+
+The JVM service is structured as two layers, separating reusable logic from HTTP transport (see [LIBRARY-USAGE.md](LIBRARY-USAGE.md) for embedded usage).
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Web Layer (validation-service.api.*)                  │
+│  Routes, handlers, Swagger UI, middleware, Jetty       │
+│  Config: web-config.edn                                │
+│                                                        │
+│  Calls ▼ ValidationService protocol methods            │
+├────────────────────────────────────────────────────────┤
+│  Library Layer (validation-service.library.*)          │
+│  ValidationService protocol, workflow orchestration,   │
+│  runner client, coordination client                    │
+│  Config: library-config.edn                            │
+│  Returns: raw data structures (maps/vectors)           │
+└────────────────────────────────────────────────────────┘
+```
+
+**Library Layer** — zero HTTP dependencies. Can be embedded in batch jobs, streaming pipelines, or other JVM applications.
+
+**Web Layer** — wraps library methods in Ring responses, adds Swagger docs, CORS, and request logging.
+
+### Source Layout
+
+```
+jvm-service/src/validation_service/
+├── core.clj                    # Application entry point
+├── config.clj                  # Configuration loading (aero)
+├── library/
+│   └── api.clj                 # ValidationService protocol + impl
+├── api/
+│   ├── routes.clj              # Reitit route definitions + Swagger
+│   ├── handlers.clj            # HTTP request handlers
+│   └── schemas.clj             # OpenAPI request/response examples
+├── orchestration/
+│   ├── workflow.clj            # Validation workflow logic
+│   └── coordination.clj        # Coordination service client (stub)
+├── runner/
+│   ├── protocol.clj            # ValidationRunnerClient protocol
+│   └── pods_client.clj         # Babashka pods implementation
+└── utils/
+    └── file_io.clj             # URI normalization, file fetching
+```
+
+### ValidationService Protocol
+
+The core public API, defined in `library/api.clj`:
 
 ```clojure
-;; Library usage (no HTTP)
-(require '[validation-service.library.api :as vlib])
-
-(def service (vlib/create-service library-config))
-
-(def results
-  (.validate service "loan" loan-data "quick"))
-;; Returns: [{"rule_id" "..." "status" "PASS" ...}]
-
-;; Web layer wraps this in HTTP response
-(defn validate-handler [{:keys [validation-service body]}]
-  (let [results (.validate validation-service ...)]
-    {:status 200
-     :body {:results results :summary {...}}}))
+(defprotocol ValidationService
+  (validate [this entity-type entity-data ruleset-name])
+  (discover-rules [this entity-type schema-url ruleset-name])
+  (batch-validate [this entities id-fields ruleset-name])
+  (batch-file-validate [this file-uri entity-types id-fields ruleset-name]))
 ```
 
-See [docs/LIBRARY-USAGE.md](LIBRARY-USAGE.md) for detailed library usage documentation.
+`ValidationServiceImpl` holds a `runner-client` and `config`, delegating each method to workflow functions in `orchestration/workflow.clj`.
 
-## Communication Protocol
+### ValidationRunnerClient Protocol
 
-### Babashka Pods (POC Phase)
-
-Babashka pods enable language interoperability via a bencode-based RPC protocol over stdin/stdout.
-
-**Protocol Characteristics:**
-- Binary encoding (bencode - BitTorrent format)
-- Bidirectional RPC over stdin/stdout
-- Stateful: Process remains alive across multiple calls (single pod serves all requests)
-- Function invocation model (not just data exchange)
-
-**Message Format:**
-- Request: `{op: "invoke", id: <request-id>, var: <function-name>, args: <args-dict>}`
-- Response: `{id: <request-id>, value: <return-value>}` or `{id: <request-id>, error: <error-msg>}`
-
-**Python Runner Functions:**
+Abstracts JVM-to-Python communication (`runner/protocol.clj`):
 
 ```clojure
-;; Phase 1: Get required data
-(pods/invoke "python-runner" "get_required_data"
-  {:entity_type "loan"
-   :entity_data {...}
-   :mode "inline"})
-;; Returns: ["parent", "all_siblings", "client_reference_data"]
-
-;; Phase 2: Run validation
-(pods/invoke "python-runner" "validate"
-  {:entity_type "loan"
-   :entity_data {...}
-   :mode "inline"
-   :required_data {...}})
-;; Returns: hierarchical results structure
-```
-
-**Libraries:**
-- Clojure: `babashka/pods` library
-- Python: `bencode` library (e.g., `bencode.py`)
-
-### Transport Abstraction Layer
-
-**Design Principle:** To facilitate future migration from babashka pods to alternative transport mechanisms (e.g., gRPC, HTTP/REST), both the Clojure/Java and Python implementations will abstract the transport layer behind well-defined interfaces/protocols.
-
-#### Clojure Side Abstraction
-
-The JVM service will define a protocol (Clojure) / interface (Java) for communicating with the Python runner:
-
-```clojure
-;; Protocol definition
 (defprotocol ValidationRunnerClient
-  "Abstract interface for communicating with Python validation runner"
-  (get-required-data [this entity-type entity-data mode]
-    "Phase 1: Query Python runner for required data vocabulary terms")
-  (validate [this entity-type entity-data mode required-data]
-    "Phase 2: Execute validation rules and return hierarchical results")
-  (shutdown [this]
-    "Clean up resources and shutdown connection"))
-
-;; Babashka Pods implementation
-(defrecord PodsRunnerClient [pod-instance]
-  ValidationRunnerClient
-  (get-required-data [this entity-type entity-data mode]
-    (pods/invoke pod-instance "get_required_data"
-      {:entity_type entity-type
-       :entity_data entity-data
-       :mode mode}))
-
-  (validate [this entity-type entity-data mode required-data]
-    (pods/invoke pod-instance "validate"
-      {:entity_type entity-type
-       :entity_data entity-data
-       :mode mode
-       :required_data required-data}))
-
-  (shutdown [this]
-    (pods/unload-pod pod-instance)))
-
-;; Factory function
-(defn create-runner-client [config]
-  (->PodsRunnerClient (pods/load-pod config)))
+  (get-required-data [this entity-type schema-url ruleset-name])
+  (validate [this entity-type entity-data ruleset-name required-data])
+  (discover-rules [this entity-type entity-data ruleset-name]))
 ```
 
-**Future gRPC implementation would be:**
-```clojure
-(defrecord GrpcRunnerClient [grpc-channel]
-  ValidationRunnerClient
-  (get-required-data [this entity-type entity-data mode]
-    ;; gRPC call implementation
-    ...)
-
-  (validate [this entity-type entity-data mode required-data]
-    ;; gRPC call implementation
-    ...)
-
-  (shutdown [this]
-    (.shutdown grpc-channel)))
-```
-
-**Java equivalent (for production phase):**
-```java
-public interface ValidationRunnerClient {
-    List<String> getRequiredData(String entityType,
-                                  Map<String, Object> entityData,
-                                  String mode);
-
-    ValidationResults validate(String entityType,
-                                Map<String, Object> entityData,
-                                String mode,
-                                Map<String, Object> requiredData);
-
-    void shutdown();
-}
-
-public class PodsRunnerClient implements ValidationRunnerClient {
-    // Bencode/pods implementation
-}
-
-public class GrpcRunnerClient implements ValidationRunnerClient {
-    // gRPC implementation
-}
-```
-
-#### Python Side Abstraction
-
-The Python runner will separate transport concerns from business logic:
-
-```python
-# transport/base.py
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List
-
-class TransportHandler(ABC):
-    """Abstract base class for transport layer"""
-
-    @abstractmethod
-    def start(self):
-        """Start listening for requests"""
-        pass
-
-    @abstractmethod
-    def send_response(self, request_id: str, result: Any):
-        """Send successful response"""
-        pass
-
-    @abstractmethod
-    def send_error(self, request_id: str, error: str):
-        """Send error response"""
-        pass
-
-    @abstractmethod
-    def receive_request(self) -> tuple[str, str, Dict[str, Any]]:
-        """Receive next request, returns (request_id, function_name, args)"""
-        pass
-
-# transport/pods_transport.py
-import bencode
-import sys
-
-class PodsTransportHandler(TransportHandler):
-    """Babashka pods transport implementation"""
-
-    def start(self):
-        # Initialize stdin/stdout handling
-        pass
-
-    def send_response(self, request_id: str, result: Any):
-        response = {"id": request_id, "value": result}
-        sys.stdout.buffer.write(bencode.encode(response))
-        sys.stdout.buffer.flush()
-
-    def send_error(self, request_id: str, error: str):
-        response = {"id": request_id, "error": error}
-        sys.stdout.buffer.write(bencode.encode(response))
-        sys.stdout.buffer.flush()
-
-    def receive_request(self) -> tuple[str, str, Dict[str, Any]]:
-        msg = bencode.decode(sys.stdin.buffer)
-        return (msg.get("id"), msg.get("var"), msg.get("args", {}))
-
-# transport/grpc_transport.py (future implementation)
-class GrpcTransportHandler(TransportHandler):
-    """gRPC transport implementation"""
-
-    def start(self):
-        # Start gRPC server
-        pass
-
-    def send_response(self, request_id: str, result: Any):
-        # Send gRPC response
-        pass
-
-    # ... other methods
-
-# runner.py (main entry point)
-from transport.pods_transport import PodsTransportHandler
-from validation_engine import ValidationEngine
-
-def main():
-    # Transport layer is injected
-    transport = PodsTransportHandler()  # Or: GrpcTransportHandler()
-    engine = ValidationEngine(config_path="./local-config.yaml")
-
-    transport.start()
-
-    while True:
-        request_id, function_name, args = transport.receive_request()
-
-        try:
-            if function_name == "get_required_data":
-                result = engine.get_required_data(
-                    args["entity_type"],
-                    args["entity_data"],
-                    args["mode"]
-                )
-            elif function_name == "validate":
-                result = engine.validate(
-                    args["entity_type"],
-                    args["entity_data"],
-                    args["mode"],
-                    args["required_data"]
-                )
-            else:
-                raise ValueError(f"Unknown function: {function_name}")
-
-            transport.send_response(request_id, result)
-
-        except Exception as e:
-            transport.send_error(request_id, str(e))
-
-if __name__ == "__main__":
-    main()
-```
-
-#### Benefits of Transport Abstraction
-
-**For POC Phase:**
-- Clean separation of concerns
-- Easier to unit test business logic (mock transport)
-- Transport layer can be tested independently
-
-**For Migration:**
-- Swap transport implementation without touching business logic
-- Both transports can coexist during transition (A/B testing)
-- Gradual rollout: test gRPC in staging while pods runs in production
-- Minimal code changes required
-
-**For Maintenance:**
-- Add new transport options easily (HTTP/REST, message queue, etc.)
-- Transport-specific optimizations don't affect core logic
-- Clear boundaries for debugging and monitoring
-
-### Migration to Java
-
-With the transport abstraction layer in place, migration from Clojure to Java is straightforward:
-
-**Step 1 - Migrate Core Logic:**
-- Implement Java version of orchestration service
-- Implement `ValidationRunnerClient` interface in Java
-- Keep using `PodsRunnerClient` implementation (Option A below)
-
-**Step 2 - Choose Transport Evolution Path:**
-
-**Option A - Continue with Bencode (Low Risk):**
-- Implement bencode protocol in Java (straightforward)
-- Keep identical interface to POC
-- No changes to Python runner
-- Libraries available: `bencode-java` or custom implementation
-- **When to choose:** Babashka pods performance is acceptable in POC
-
-**Option B - Migrate to gRPC (Performance):**
-- Define `.proto` service definition
-- Implement `GrpcRunnerClient` in Java
-- Implement `GrpcTransportHandler` in Python (already abstracted)
-- Run Python runner as long-running service
-- Better tooling, monitoring, and streaming support
-- **When to choose:** POC identifies performance issues with process spawning
-
-**Option C - Hybrid Approach:**
-- Support both transports simultaneously
-- Use feature flag to control which transport is used
-- Gradual migration entity-type by entity-type
-- Fallback to pods if gRPC service unavailable
-
-**Recommendation:**
-
-1. **POC Phase:** Use babashka pods with transport abstraction
-2. **Production Decision Point:** Based on POC performance results:
-   - If sub-second target met easily → Option A (continue with bencode in Java)
-   - If performance tight or batch mode slow → Option B (migrate to gRPC)
-3. Transport abstraction makes either path straightforward
-
-## JVM Orchestration Service
-
-### Technology Stack
-
-**POC:**
-- Clojure 1.11+
-- Ring/Reitit for HTTP (data-driven routing)
-- babashka/pods for Python communication
-- cheshire for JSON handling
-- clojure.tools.logging
-
-**Production:**
-- Java 17+
-- Spring Boot 3.x
-- Either bencode library or gRPC
-- Jackson for JSON
-- SLF4J/Logback for logging
-- Micrometer for metrics
-
-### Architecture with Transport Abstraction
-
-The JVM service uses the `ValidationRunnerClient` protocol/interface (defined in the Communication Protocol section) to abstract Python runner communication. This enables:
-
-1. **Swapping transports** without changing orchestration logic
-2. **Testing** with mock implementations
-3. **Gradual migration** from pods to gRPC
-4. **Clean separation** between business logic and transport concerns
-
-**Clojure Implementation Structure:**
-```
-src/
-├── validation_service/
-│   ├── core.clj                  # Main application entry point
-│   ├── api/
-│   │   ├── handlers.clj          # Request handler functions
-│   │   └── routes.clj            # Reitit route definitions (data-driven)
-│   ├── orchestration/
-│   │   ├── workflow.clj          # Validation workflow logic
-│   │   └── coordination.clj      # Coordination service client
-│   ├── runner/
-│   │   ├── protocol.clj          # ValidationRunnerClient protocol
-│   │   ├── pods_client.clj       # Babashka pods implementation
-│   │   └── grpc_client.clj       # gRPC implementation (future)
-│   └── monitoring/
-│       └── metrics.clj            # Performance tracking
-```
-
-**Java Implementation Structure:**
-```
-src/main/java/
-├── com/bank/validation/
-│   ├── Application.java           # Spring Boot application
-│   ├── api/
-│   │   └── ValidationController.java
-│   ├── orchestration/
-│   │   ├── ValidationWorkflow.java
-│   │   └── CoordinationServiceClient.java
-│   ├── runner/
-│   │   ├── ValidationRunnerClient.java     # Interface
-│   │   ├── PodsRunnerClient.java           # Bencode impl
-│   │   └── GrpcRunnerClient.java           # gRPC impl
-│   └── monitoring/
-│       └── MetricsCollector.java
-```
-
-All orchestration code depends only on the `ValidationRunnerClient` abstraction, never on specific transport implementations.
+`PodsRunnerClient` implements this via `babashka.pods/invoke`. A future `GrpcRunnerClient` would implement the same protocol — no workflow changes needed.
 
 ### Configuration
 
-The JVM service uses a **two-configuration architecture** separating library and web concerns:
+**Library config** (`jvm-service/resources/library-config.edn`):
 
-**Library Configuration** (`jvm-service/resources/library-config.edn`):
 ```clojure
 {:python_runner
  {:executable "python3"
@@ -667,63 +286,583 @@ The JVM service uses a **two-configuration architecture** separating library and
   :config_path "../python-runner/local-config.yaml"
   :spawn_timeout_ms 5000
   :validation_timeout_ms 30000
-  :pool_size 5
-  :pool_max_idle_ms 300000}
+  :pool_size 5}
 
  :coordination_service
  {:base_url "http://localhost:8081"
   :timeout_ms 5000
   :retry_attempts 3
-  :retry_delay_ms 1000
-  :circuit_breaker_enabled true
-  :failure_threshold 5
-  :reset_timeout_ms 60000}}
+  :circuit_breaker_enabled true}}
 ```
 
-**Web Configuration** (`jvm-service/resources/web-config.edn`):
+**Web config** (`jvm-service/resources/web-config.edn`):
+
 ```clojure
-{:service
- {:port 8080
-  :host "0.0.0.0"
-  :max_threads 100}
-
- :cors
- {:allowed_origins ["http://localhost:3000"]
-  :allowed_methods [:get :post :put :delete :options]
-  :allowed_headers ["Content-Type" "Authorization"]
-  :max_age 3600}
-
- :logging
- {:level :info
-  :appenders {:console {:enabled true}
-              :file {:enabled true
-                     :path "./logs/validation-service.log"}}}
-
- :monitoring
- {:metrics_enabled true
-  :health_check_enabled true}}
+{:service {:port 8080 :host "0.0.0.0"}
+ :cors {:enabled true :allowed_origins ["http://localhost:3000"]}
+ :logging {:level :info}
+ :monitoring {:metrics_enabled true :health_check_enabled true}}
 ```
 
-### REST API
+### Technology Stack
 
-#### Inline Validation
+| Component | Library |
+|-----------|---------|
+| HTTP server | Ring + Jetty |
+| Routing | Reitit (data-driven) |
+| API docs | Reitit Swagger + Swagger UI |
+| JSON | Cheshire |
+| Pod communication | babashka/pods |
+| HTTP client | clj-http |
+| Configuration | Aero |
+| Logging | tools.logging + Logback |
+
+---
+
+## 5. Python Runner Architecture
+
+### Source Layout
+
+```
+python-runner/
+├── runner.py                    # Entry point (pod protocol loop)
+├── local-config.yaml            # Tier 1: Infrastructure config
+├── requirements.txt             # Dependencies
+├── core/
+│   ├── validation_engine.py     # Main orchestration
+│   ├── rule_executor.py         # Hierarchical rule execution
+│   ├── rule_loader.py           # Dynamic rule discovery
+│   ├── config_loader.py         # Two-tier config loading
+│   ├── rule_fetcher.py          # Remote rule fetching + caching
+│   └── logic_fetcher.py         # Remote logic package fetching
+├── transport/
+│   ├── base.py                  # Abstract TransportHandler
+│   ├── pods_transport.py        # Babashka pods implementation
+│   ├── bencode_reader.py        # Stream-aware bencode parser
+│   └── case_conversion.py       # kebab-case ↔ snake_case
+└── tests/
+    ├── test_rule_executor.py
+    ├── test_entity_helper_integration.py
+    ├── test_rule_discovery.py
+    └── ...
+```
+
+### Entry Point (`runner.py`)
+
+The runner bootstraps the logic directory, initializes a `ValidationEngine` and a `PodsTransportHandler`, then enters a request loop:
+
+```python
+# Bootstrap: resolve logic directory (local or remote)
+fetcher = LogicPackageFetcher()
+logic_dir = fetcher.resolve_logic_dir(config_path)
+sys.path.insert(0, logic_dir)
+
+# Initialize and run
+engine = ValidationEngine(config_path)
+transport = PodsTransportHandler()  # Pluggable: could be GrpcTransportHandler
+transport.start()
+
+while True:
+    request_id, function_name, args = transport.receive_request()
+    # Dispatch to engine method based on function_name
+    # Send response or error via transport
+```
+
+The bootstrap step resolves `logic/` to either a local directory (development) or a cached copy of a remote package (production). The transport is injected — switching to gRPC means replacing one line, with zero changes to validation logic.
+
+### ValidationEngine
+
+Central orchestration class (`core/validation_engine.py`). Manages config loading, rule loading, and dispatches to the rule executor.
+
+**Pod-exposed functions:**
+
+| Function | Purpose | Input | Output |
+|----------|---------|-------|--------|
+| `get-required-data` | Introspect rules for external data needs | entity_type, schema_url, ruleset_name | `["parent", "all_siblings", ...]` |
+| `validate` | Execute rules against entity | entity_type, entity_data, ruleset_name, required_data | Hierarchical result list |
+| `discover-rules` | Return rule metadata with field dependencies | entity_type, entity_data, ruleset_name | Map of rule_id → metadata |
+
+**Rule routing logic** (`_get_rules_for_ruleset`):
+1. Look up `{ruleset_name}_rules` in business config
+2. Try schema URL key first (version-specific rules)
+3. Fall back to entity type key (backward compatibility)
+
+### RuleExecutor
+
+Executes rules hierarchically with timing (`core/rule_executor.py`):
+
+1. For each rule in the config list, inject the entity helper and required data
+2. Call `rule.run()` with timing
+3. If PASS and rule has children → execute children recursively
+4. If FAIL/NORUN → mark all children as NORUN ("Parent rule did not pass")
+5. If exception → status = ERROR with traceback message
+
+Result structure:
+
+```json
+{
+  "rule_id": "rule_001_v1",
+  "description": "JSON Schema validation",
+  "status": "PASS",
+  "message": "",
+  "execution_time_ms": 12.5,
+  "children": [
+    {
+      "rule_id": "rule_004_v1",
+      "status": "NORUN",
+      "message": "Parent rule did not pass, rule skipped",
+      "children": []
+    }
+  ]
+}
+```
+
+### RuleLoader
+
+Dynamic rule discovery (`core/rule_loader.py`). Uses filename as the single source of truth for rule identity:
+
+- Config specifies `rule_id: rule_001_v1`
+- Loader searches `logic/rules/{entity_type}/rule_001_v1.py`
+- Imports the module, finds class `Rule` (standard name for all rules)
+- Instantiates with injected ID: `Rule("rule_001_v1")`
+- Caches the class for subsequent loads
+
+Supports two modes:
+- **Path mode** (development): searches local `logic/rules/` directory
+- **URI mode** (production): uses `ConfigLoader.resolve_rule_uri()` + `RuleFetcher` for remote rules
+
+### Dependencies
+
+```
+bencodepy>=0.9.5      # Babashka pods bencode protocol
+PyYAML>=6.0           # Configuration parsing
+jsonschema>=4.17.0    # JSON Schema validation (used by rule_001_v1)
+```
+
+---
+
+## 6. Communication Protocol
+
+### Babashka Pods (POC)
+
+The JVM spawns the Python runner as a child process. They communicate via bencode-encoded messages over stdin/stdout.
+
+```
+┌───────────┐    bencode/stdin/stdout    ┌──────────────┐
+│  Clojure  │◄──────────────────────────►│   Python     │
+│  JVM      │     (process spawn)        │   Runner     │
+└───────────┘                            └──────────────┘
+```
+
+**Message flow:**
+
+1. JVM calls `pods/load-pod ["python3" "runner.py" "local-config.yaml"]`
+2. Python sends `describe` response (namespace, available functions)
+3. JVM sends `invoke` messages; Python responds with `value` or `error`
+4. Pod stays alive across multiple requests (single persistent process)
+
+**Invoke message format:**
+```
+{op: "invoke", id: "req-1", var: "validate", args: {...}}
+→ {id: "req-1", value: "[{...json results...}]", status: ["done"]}
+```
+
+The `format: "json"` declaration in `describe` means values are JSON-encoded strings within bencode, automatically parsed by the pods library.
+
+### Case Conversion
+
+Clojure uses kebab-case (`get-required-data`), Python uses snake_case (`get_required_data`). The transport layer handles conversion in both directions via `case_conversion.py`.
+
+### Transport Abstraction
+
+Both sides abstract the protocol behind interfaces:
+
+**JVM:** `ValidationRunnerClient` protocol → `PodsRunnerClient` (or future `GrpcRunnerClient`)
+
+**Python:** `TransportHandler` ABC → `PodsTransportHandler` (or future `GrpcTransportHandler`)
+
+```python
+class TransportHandler(ABC):
+    @abstractmethod
+    def start(self): ...
+    @abstractmethod
+    def send_response(self, request_id: str, result: Any): ...
+    @abstractmethod
+    def send_error(self, request_id: str, error: str): ...
+    @abstractmethod
+    def receive_request(self) -> tuple[str, str, Dict[str, Any]]: ...
+```
+
+The `ValidationEngine` receives the same dict structures regardless of transport. See [POD-VS-GRPC.md](POD-VS-GRPC.md) for a detailed protocol comparison and migration plan.
+
+---
+
+## 7. Two-Tier Configuration
+
+### Motivation
+
+Production deployments need separation of concerns: the **service team** owns infrastructure settings, the **rules team** owns business logic. These should be independently versioned and deployed.
+
+### Architecture
+
+```
+Tier 1: Infrastructure                  Tier 2: Business Logic
+(service team)                           (rules team, inside logic/)
+
+┌─────────────────────────┐             ┌─────────────────────────┐
+│ python-runner/          │             │ logic/                  │
+│   local-config.yaml     │────────────▶│   business-config.yaml  │
+│                         │  references │                         │
+│ • business_config_uri   │             │ • Rule set definitions  │
+│ • rule_cache_dir        │             │ • Schema→helper mapping │
+│ • cache_enabled         │             │ • Version compatibility │
+└─────────────────────────┘             │ • rules_base_uri (opt)  │
+                                        │                         │
+                                        │   rules/                │
+                                        │   models/               │
+                                        └─────────────────────────┘
+```
+
+### Tier 1: Local Config (`python-runner/local-config.yaml`)
+
+```yaml
+business_config_uri: "../logic/business-config.yaml"   # or https://...
+rule_cache_dir: "/tmp/validation-cache"
+cache_enabled: true
+```
+
+The `business_config_uri` is a **layer of indirection**: it points from the service's infrastructure config into the `logic/` directory where all business-owned assets reside. This URI supports relative paths, `file://`, `http://`, and `https://` — meaning `logic/` could be a local directory, a mounted volume, or a remote CDN. Remote configs are fetched and cached by `ConfigLoader` using SHA256-keyed files.
+
+### Tier 2: Business Config (`logic/business-config.yaml`)
+
+```yaml
+# Rule set definitions (schema-version-specific)
+quick_rules:
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_001_v1
+    - rule_id: rule_002_v1
+  loan:   # Fallback for entities without $schema
+    - rule_id: rule_001_v1
+
+thorough_rules:
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_001_v1
+    - rule_id: rule_002_v1
+    - rule_id: rule_003_v1
+      children:
+        - rule_id: rule_004_v1    # Only runs if rule_003 passes
+
+# Schema URL → entity helper class mapping
+schema_to_helper_mapping:
+  "https://bank.example.com/schemas/loan/v1.0.0": "loan_v1.LoanV1"
+  "https://bank.example.com/schemas/loan/v2.0.0": "loan_v2.LoanV2"
+
+# Fallback when $schema is absent
+default_helpers:
+  loan: "loan_v1.LoanV1"
+
+# Version compatibility
+version_compatibility:
+  allow_minor_version_fallback: true   # v1.1.0 → v1.0.0 helper
+  strict_major_version: true           # Unknown major → error
+```
+
+### Production Deployment
+
+```yaml
+# local-config.yaml (production)
+business_config_uri: "https://rules-cdn.example.com/prod/business-config.yaml"
+
+# business-config.yaml (hosted remotely)
+rules_base_uri: "https://rules-cdn.example.com/prod/rules"
+```
+
+Rules are fetched via `RuleFetcher` with SHA256-based caching in `rule_cache_dir`. The rules team can deploy new rules independently of the service.
+
+### Remote Logic Package Fetching
+
+When `business_config_uri` points to a remote URL, the `LogicPackageFetcher` fetches the entire `logic/` package into a local cache at startup. The file list is derived from `business-config.yaml` itself — no manifest needed. See [The `logic/` Folder](#the-logic-folder) in Section 3 for the full design, including the immutability model that makes this safe.
+
+**Production configuration:**
+```yaml
+# local-config.yaml — the only change needed
+business_config_uri: "https://rules-cdn.example.com/prod/logic/business-config.yaml"
+```
+
+This single URI change makes the service fetch the entire logic package from the CDN. The rules team publishes to the CDN; the service team deploys nothing.
+
+---
+
+## 8. Validation Rules
+
+### Rule Base Class
+
+All rules inherit from `ValidationRule` (`logic/rules/base.py`):
+
+```python
+class ValidationRule(ABC):
+    def __init__(self, rule_id: str): ...
+    def get_id(self) -> str: ...
+
+    @abstractmethod
+    def validates(self) -> str: ...           # Entity type ("loan")
+    @abstractmethod
+    def required_data(self) -> list[str]: ... # ["parent", "all_siblings"]
+    @abstractmethod
+    def description(self) -> str: ...         # Plain English
+    @abstractmethod
+    def set_required_data(self, data: dict) -> None: ...
+    @abstractmethod
+    def run(self) -> tuple[str, str]: ...     # (status, message)
+```
+
+**Status values:** PASS, FAIL, NORUN, ERROR
+
+The rule executor injects `self.entity` (an entity helper instance) before calling `run()`. Rules access data through the helper's logical properties, never via raw dict access.
+
+### Rule File Conventions
+
+- **Location:** `logic/rules/{entity_type}/rule_{id}_v{version}.py`
+- **Class name:** Always `Rule` (standard across all rules)
+- **Rule ID:** Derived from filename by the loader (`rule_001_v1.py` → `rule_001_v1`)
+- **Versioning:** New version = new file (`rule_001_v2.py`), config selects which to use
+
+### Implemented Rules (Loans)
+
+| Rule | Description | Required Data |
+|------|-------------|---------------|
+| `rule_001_v1` | JSON Schema validation against `$schema` | None |
+| `rule_002_v1` | Financial soundness (principal > 0, maturity > inception, balance ≤ principal, rate ≥ 0) | None |
+| `rule_003_v1` | Status must be valid (active, paid_off, defaulted, written_off) | None |
+| `rule_004_v1` | Balance constraints (paid_off → zero balance, active → non-zero) | None |
+
+### Hierarchical Execution
+
+Rules can be organized as parent-child in configuration:
+
+```yaml
+thorough_rules:
+  "https://bank.example.com/schemas/loan/v1.0.0":
+    - rule_id: rule_003_v1        # Parent: status validation
+      children:
+        - rule_id: rule_004_v1    # Child: balance constraints
+```
+
+If the parent fails, all children are marked NORUN. This models prerequisites: "don't check balance constraints if the status itself is invalid."
+
+### Required Data Vocabulary
+
+Rules declare external data needs using vocabulary terms:
+
+- **Hierarchical:** `parent`, `all_children`, `all_siblings`
+- **Related:** `client_reference_data`, `related_parties`
+
+The JVM service fetches this data from the coordination service (currently stubbed) and passes it to the Python runner for injection into rules via `set_required_data()`.
+
+### Writing a New Rule
+
+1. Create `logic/rules/loan/rule_005_v1.py`:
+   ```python
+   from rules.base import ValidationRule
+
+   class Rule(ValidationRule):
+       def validates(self) -> str:
+           return "loan"
+
+       def required_data(self) -> list[str]:
+           return []
+
+       def description(self) -> str:
+           return "Loan currency must be a supported currency"
+
+       def set_required_data(self, data: dict) -> None:
+           pass
+
+       def run(self) -> tuple[str, str]:
+           supported = {"USD", "EUR", "GBP", "JPY"}
+           if self.entity.currency not in supported:
+               return ("FAIL", f"Unsupported currency: {self.entity.currency}")
+           return ("PASS", "")
+   ```
+
+2. Add to `logic/business-config.yaml`:
+   ```yaml
+   quick_rules:
+     "https://bank.example.com/schemas/loan/v1.0.0":
+       - rule_id: rule_005_v1
+   ```
+
+3. Restart service. No other changes needed.
+
+---
+
+## 9. Entity Helper System
+
+### Problem
+
+Validation rules that access raw JSON paths (`entity_data["financial"]["principal_amount"]`) break whenever the data model is restructured. With hundreds of rules, a field rename cascades into hundreds of code changes.
+
+### Solution: Data Abstraction Layer
+
+Entity helpers provide stable logical properties that map to physical JSON paths. Rules use `self.entity.principal` regardless of whether the underlying field is `amount`, `principal_amount`, or `financial.principal_amount`.
+
+```python
+# Rule code - stable across schema versions:
+if self.entity.principal <= 0:
+    return ("FAIL", "Principal must be positive")
+```
+
+### Version-Specific Helpers
+
+Each major schema version has its own helper class:
+
+**LoanV1** (schema v1.0.0) — key mappings:
+
+| Logical Property | Physical Path |
+|-----------------|---------------|
+| `reference` | `loan_number` |
+| `facility` | `facility_id` |
+| `principal` | `financial.principal_amount` |
+| `balance` | `financial.outstanding_balance` |
+| `rate` | `financial.interest_rate` |
+| `inception` | `dates.origination_date` |
+| `maturity` | `dates.maturity_date` |
+| `status` | `status` |
+
+**LoanV2** (schema v2.0.0) — breaking changes:
+
+| Logical Property | Physical Path (changed) |
+|-----------------|------------------------|
+| `reference` | `reference_number` (was `loan_number`) |
+| `facility` | `facility_ref` (was `facility_id`) |
+| `rate` | `financial.rate` (was `financial.interest_rate`) |
+| `category` | `loan_category` (new field) |
+
+Both helpers expose the same logical interface. Rules work unchanged across versions.
+
+### Version Registry
+
+The `VersionRegistry` (singleton) routes entity data to the correct helper based on the `$schema` URL declared in the data:
+
+**Resolution order:**
+1. Exact `$schema` match in `schema_to_helper_mapping`
+2. Minor version fallback: `v1.2.0` → finds `v1.0.0` mapping (if enabled)
+3. Default helper by entity type (when `$schema` is absent)
+4. `ValueError` if no match
+
+For schema URLs pointing to `.json` files (`file://`, `https://`), the registry fetches the schema and extracts the canonical `$id` for matching.
+
+### Factory Function
+
+```python
+from entity_helpers import create_entity_helper
+
+helper = create_entity_helper("loan", entity_data, track_access=True)
+```
+
+The factory delegates to `VersionRegistry.get_helper_class()`, which returns the appropriate class (`LoanV1` or `LoanV2`). The rule executor calls this automatically.
+
+### Field Access Tracking
+
+Helpers optionally record which properties each rule accesses during execution:
+
+```python
+helper = create_entity_helper("loan", entity_data, track_access=True)
+# ... rule executes ...
+dependencies = helper.get_accesses()
+# [("principal", "financial.principal_amount"), ("balance", "financial.outstanding_balance")]
+```
+
+Each access is recorded as a `(logical_name, physical_path)` tuple. This powers the `discover-rules` API, enabling:
+- Model change impact analysis ("which rules break if we rename this field?")
+- Automated dependency documentation
+- Regression testing for helper changes
+
+### Adding a New Schema Version
+
+1. Create `logic/models/loan.schema.v3.0.0.json`
+2. Create `logic/entity_helpers/loan_v3.py` with mappings for the new schema
+3. Add to `logic/business-config.yaml`:
+   ```yaml
+   schema_to_helper_mapping:
+     "https://bank.example.com/schemas/loan/v3.0.0": "loan_v3.LoanV3"
+   ```
+
+No rule changes needed. The registry picks up the mapping on next startup.
+
+---
+
+## 10. Validation Workflow
+
+### Single Entity Flow
+
+```
+Client ──POST /api/v1/validate──▶ JVM Handler
+                                    │
+                            1. Normalize $schema URL
+                            2. get-required-data ──▶ Python Runner
+                               ◀── ["parent", ...]
+                            3. Fetch data from coordination service
+                            4. validate ──▶ Python Runner
+                               ◀── [{rule results}]
+                            5. Return results to client
+```
+
+**Detailed steps:**
+
+1. **Parse request:** Extract `entity_type`, `entity_data`, `ruleset_name`
+2. **Normalize schema URL:** Convert relative `file://` URIs to absolute paths (Python's `urllib` can't resolve relative `file://` URIs). Implemented in `utils/file_io.clj`.
+3. **Get required data terms:** Call Python runner's `get-required-data` with entity type, schema URL, and ruleset name. Returns vocabulary terms like `["parent"]`.
+4. **Fetch external data:** Call coordination service for each vocabulary term (currently stubbed, returns empty map).
+5. **Execute validation:** Call Python runner's `validate` with entity data + fetched data. Python loads rules, creates entity helper, executes hierarchically, returns results.
+6. **Return results:** Hierarchical validation results with per-rule status, message, and timing.
+
+### Batch Flow
+
+**Inline batch** (`POST /api/v1/batch`): Accepts an array of entities with inline data. Supports mixed entity types. Calls `execute-validation` per entity, aggregates results with per-entity summaries.
+
+**File batch** (`POST /api/v1/batch-file`): Loads entities from a URI (`file://`, `http://`, `https://`). Requires `entity_types` and `id_fields` maps to correlate schemas to types and ID fields.
+
+Both batch endpoints pre-validate that all schemas in the batch have corresponding `id_fields` entries before processing.
+
+---
+
+## 11. REST API
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/validate` | Validate a single entity |
+| POST | `/api/v1/batch` | Validate multiple entities (inline data) |
+| POST | `/api/v1/batch-file` | Validate entities from file URI |
+| POST | `/api/v1/discover-rules` | Get rule metadata and field dependencies |
+| GET | `/health` | Service health check |
+| GET | `/swagger-ui` | Interactive API documentation |
+
+### Single Validation Request/Response
 
 **Request:**
-```http
-POST /api/v1/validate
-Content-Type: application/json
-
+```json
 {
   "entity_type": "loan",
   "entity_data": {
-    "$schema": "https://bank.example.com/schemas/loan/v1.0.0",
-    "id": "LOAN-12345",
-    "amount": 500000,
-    "currency": "USD",
-    "facility_id": "FAC-789",
-    "maturity_date": "2028-12-31",
-    ...
-  }
+    "$schema": "file://../logic/models/loan.schema.v1.0.0.json",
+    "loan_number": "LN-001",
+    "facility_id": "FAC-100",
+    "financial": {
+      "principal_amount": 100000,
+      "outstanding_balance": 75000,
+      "currency": "USD",
+      "interest_rate": 0.05
+    },
+    "dates": {
+      "origination_date": "2024-01-01",
+      "maturity_date": "2025-12-31"
+    },
+    "status": "active"
+  },
+  "ruleset_name": "quick"
 }
 ```
 
@@ -731,2447 +870,315 @@ Content-Type: application/json
 ```json
 {
   "entity_type": "loan",
-  "entity_id": "LOAN-12345",
-  "timestamp": "2026-02-02T10:30:00Z",
-  "mode": "inline",
+  "entity_id": "LN-001",
   "results": [
     {
-      "rule_id": "rule_001",
-      "description": "Loan amount must not exceed facility limit",
+      "rule_id": "rule_001_v1",
+      "description": "JSON Schema validation",
       "status": "PASS",
       "message": "",
-      "execution_time_ms": 15,
-      "children": [
-        {
-          "rule_id": "rule_042",
-          "description": "Facility utilization must be below 95%",
-          "status": "PASS",
-          "message": "",
-          "execution_time_ms": 8,
-          "children": []
-        }
-      ]
+      "execution_time_ms": 15.2,
+      "children": []
     },
     {
-      "rule_id": "rule_055",
-      "description": "Currency must match facility currency",
-      "status": "FAIL",
-      "message": "Loan currency USD does not match facility currency EUR",
-      "execution_time_ms": 5,
+      "rule_id": "rule_002_v1",
+      "description": "Financial soundness checks",
+      "status": "PASS",
+      "message": "",
+      "execution_time_ms": 1.1,
       "children": []
     }
   ],
   "summary": {
-    "total_rules": 10,
-    "passed": 8,
-    "failed": 1,
-    "not_run": 1,
-    "total_time_ms": 245
+    "total_rules": 2,
+    "passed": 2,
+    "failed": 0,
+    "not_run": 0
   }
 }
 ```
 
-#### Batch Validation
+### Batch Request
 
-**Inline Batch (POST /api/v1/batch):**
-
-Validates multiple entities with inline data. Supports mixed entity types and flexible output modes.
-
-**Request:**
-```http
-POST /api/v1/batch
-Content-Type: application/json
-
-{
-  "entities": [
-    {
-      "entity_type": "loan",
-      "entity_data": {
-        "$schema": "file://../models/loan.schema.v1.0.0.json",
-        "loan_number": "LN-001",
-        ...
-      }
-    },
-    {
-      "entity_type": "loan",
-      "entity_data": {
-        "$schema": "file://../models/loan.schema.v1.0.0.json",
-        "loan_number": "LN-002",
-        ...
-      }
-    }
-  ],
-  "id_fields": {
-    "file://../models/loan.schema.v1.0.0.json": "loan_number"
-  },
-  "ruleset_name": "quick",
-  "output_mode": "response"  // or "file"
-}
-```
-
-**Response (output_mode="response"):**
 ```json
 {
-  "batch_id": "BATCH-2026-02-12-001",
-  "timestamp": "2026-02-12T10:30:00Z",
-  "mode": "batch",
-  "entity_count": 2,
-  "results": [
-    {
-      "entity_type": "loan",
-      "entity_id": "LN-001",
-      "schema": "file://../models/loan.schema.v1.0.0.json",
-      "status": "completed",
-      "results": [...],
-      "summary": {
-        "total_rules": 2,
-        "passed": 2,
-        "failed": 0,
-        "not_run": 0
-      }
-    },
-    ...
+  "entities": [
+    {"entity_type": "loan", "entity_data": {"$schema": "...", ...}},
+    {"entity_type": "loan", "entity_data": {"$schema": "...", ...}}
   ],
-  "overall_summary": {
-    "total_entities": 2,
-    "completed": 2,
-    "errors": 0,
-    "entities_with_failures": 0
-  }
+  "id_fields": {
+    "file://../logic/models/loan.schema.v1.0.0.json": "loan_number"
+  },
+  "ruleset_name": "thorough",
+  "output_mode": "response"
 }
 ```
 
-**File-Based Batch (POST /api/v1/batch-file):**
+Supports `output_mode: "file"` with `output_path` to write results to disk instead of returning in the HTTP response.
 
-Loads entities from a file URI (file://, http://, https://). All entities must be of the same type.
+### Batch-File Request
 
-**Request:**
-```http
-POST /api/v1/batch-file
-Content-Type: application/json
-
+```json
 {
   "file_uri": "file:./test/test-data/loans.json",
   "entity_types": {
-    "file://../../models/loan.schema.v1.0.0.json": "loan"
+    "file://../logic/models/loan.schema.v1.0.0.json": "loan"
   },
   "id_fields": {
-    "file://../../models/loan.schema.v1.0.0.json": "loan_number"
+    "file://../logic/models/loan.schema.v1.0.0.json": "loan_number"
   },
-  "ruleset_name": "thorough",
-  "output_mode": "file",
-  "output_path": "test/results/validation-results.json"
+  "ruleset_name": "thorough"
 }
 ```
 
-**Response (output_mode="file"):**
+### Discover Rules Request/Response
+
+**Request:**
 ```json
 {
-  "batch_id": "BATCH-2026-02-12-002",
-  "status": "completed",
-  "file_uri": "file:./test/test-data/loans.json",
-  "output_path": "test/results/validation-results.json",
-  "entity_count": 2,
-  "message": "Results written to file"
+  "entity_type": "loan",
+  "schema_url": "file://../logic/models/loan.schema.v1.0.0.json",
+  "ruleset_name": "quick"
 }
 ```
 
-**Key Features:**
-- **Mixed Entity Types**: `/api/v1/batch` supports different entity types in one request
-- **ID Field Mapping**: `id_fields` maps each schema URL to its ID field for correlation
-- **Schema Validation**: Pre-validates that all schemas in batch have corresponding `id_fields` entries
-- **Flexible Output**: Both endpoints support `output_mode` ("response" or "file")
-- **File URIs**: `/api/v1/batch-file` supports file://, http://, and https:// protocols
-- **Path Normalization**: Relative file:// URIs automatically converted to absolute paths for Python compatibility
-
-#### File Path Handling and Containerization
-
-**Relative Path Support:**
-
-The service supports relative file:// URIs for container compatibility. All file paths are relative to the working directory (`jvm-service/`).
-
-**Path Formats:**
-- Schema URLs in entity data: `file://../models/loan.schema.v1.0.0.json`
-- File URIs for batch-file: `file:./test/test-data/loans.json`
-- HTTP/HTTPS URIs: `https://example.com/data.json`
-
-**Automatic Path Normalization:**
-
-Python's `urllib.request.urlopen()` cannot properly resolve relative file:// URIs (treats `file://../models/` as `/models/` from root). The JVM service automatically normalizes relative URIs to absolute paths before passing to Python.
-
-**Implementation** (`src/validation_service/utils/file_io.clj`):
-```clojure
-(defn normalize-file-uri
-  "Convert relative file:// URIs to absolute paths.
-
-  Examples:
-    file://../models/schema.json → file:///Users/jude/.../models/schema.json
-    file:./test/data.json → file:///Users/jude/.../jvm-service/test/data.json
-    http://example.com/data.json → http://example.com/data.json (unchanged)"
-  [uri]
-  (if (and uri (.startsWith uri "file:"))
-    (let [is-relative? (or (.startsWith uri "file://..")
-                         (.startsWith uri "file:."))]
-      (if is-relative?
-        ;; Resolve to absolute path using current working directory
-        (let [path-str (remove-file-prefix uri)
-              absolute-file (-> path-str io/file .getCanonicalFile)
-              absolute-path (.getAbsolutePath absolute-file)]
-          (str "file://" absolute-path))
-        uri))
-    uri))
-```
-
-**Workflow Integration:**
-
-In `execute-validation` workflow:
-1. Extract schema URL from `entity_data["$schema"]`
-2. Normalize schema URL using `normalize-file-uri`
-3. Update entity_data with normalized schema URL
-4. Pass normalized URL to Python runner
-
-**Container Directory Structure:**
-```
-/app/
-├── models/              # At ../models from jvm-service/
-│   └── loan.schema.v1.0.0.json
-└── jvm-service/         # WORKDIR
-    ├── test/
-    │   └── test-data/   # At ./test/test-data from jvm-service/
-    └── validation-service.jar
-```
-
-**Benefits:**
-- Container-ready: Works in Docker/Podman without filesystem-specific paths
-- Portable: Same relative paths work across different environments
-- Python-compatible: Normalized absolute paths work with urllib
-- Tested: All test suites pass with relative paths and schema validation working
-
-### Validation Workflow
-
-#### Inline Mode Flow
-
-**JVM Inline Mode** = Real-time validation with "quick" rule set
-
-```
-1. Client → POST /api/v1/validate
-2. JVM validates request
-3. JVM uses persistent Python runner pod (created at service startup)
-4. JVM → Python: get_required_data(entity_type, schema_url, ruleset_name="quick")
-   - JVM decides to use "quick" rule set for inline mode (real-time, minimal checks)
-   - schema_url extracted from entity_data['$schema'], used to determine version-specific rules
-5. Python:
-   - Loads config
-   - Identifies rules for schema_url in "quick_rules" section (falls back to entity_type for backward compatibility)
-   - Loads rule classes from file system
-   - Calls required_data() on each rule
-   - Aggregates and deduplicates
-   - Returns: ["parent", "all_siblings", "client_reference_data"]
-   - Note: "schema" is NOT a vocabulary term - schemas are in entity data via $schema field
-6. JVM calls Coordination Service:
-   - GET /api/data/parent/{entity_id}
-   - GET /api/data/siblings/{entity_id}
-   - GET /api/data/client/{client_id}
-   - Schemas are loaded from local models/ files, NOT from coordination service
-7. JVM aggregates fetched data into required_data dict
-8. JVM → Python: validate(entity_type, entity_data, ruleset_name="quick", required_data)
-9. Python:
-   - Loads config and rules from "quick_rules" section (same as step 5)
-   - Executes rules in hierarchical order:
-     * Call set_required_data() with relevant data subset
-     * Call run()
-     * Capture status, message, timing
-     * If PASS and has children, execute children
-     * If FAIL or NORUN, skip children (mark as NORUN)
-   - Returns hierarchical results
-10. JVM receives results
-11. JVM logs results to centralized log
-12. JVM monitors rule performance (alerts if threshold exceeded)
-13. JVM terminates Python runner process
-14. JVM → Client: Return results
-```
-
-#### Batch Mode Flow
-
-**JVM Batch Mode** = Background validation with "thorough" rule set
-
-```
-1. Client → POST /api/v1/validate/batch with entity list
-2. JVM parses and validates request
-3. JVM spawns Python runner pod (long-running process)
-4. For each entity in batch:
-   a. Execute same two-phase flow as inline mode BUT with ruleset_name="thorough"
-   b. JVM passes "thorough" rule set for comprehensive validation
-   c. Python runner loads more extensive rule set from "thorough_rules" config section
-   d. Collect results
-5. JVM terminates Python runner pod
-6. JVM aggregates all entity results
-7. JVM computes overall summary statistics
-8. JVM logs batch results
-9. JVM → Client: Return batch results
-```
-
-**Note:** A single pod instance is reused for all entities in the batch:
-- Pods are long-running processes that handle multiple requests sequentially
-- Avoids startup/shutdown overhead for each entity
-- Maintains process isolation at the batch level
-- Simplifies resource management (one process per batch, not per entity)
-- Future enhancement: Pod pooling for parallel batch processing
-
-### Performance Monitoring
-
-The JVM service tracks and logs:
-
-**Per-rule metrics:**
-- Execution time (from Python runner timing data)
-- Success rate (PASS/FAIL/NORUN distribution)
-- Error patterns (common failure messages)
-
-**Per-validation metrics:**
-- Total validation time
-- Python runner spawn overhead
-- Coordination service call latency
-- Number of rules executed
-
-**Alerting:**
-- Rule exceeds performance threshold (configured in business-config.yaml)
-- Coordination service timeout/failures
-- Python runner spawn failures
-- Abnormal error rates
-
-**Storage:**
-- Metrics exported to time-series database (Prometheus, InfluxDB, etc.)
-- Enables dashboards, trending, and historical analysis
-
-## Python Rule Runner
-
-### Technology Stack
-
-- Python 3.10+
-- bencodepy library for pod protocol (installed via `pip install bencodepy`)
-- PyYAML for configuration
-- jsonschema library for validating entity data against JSON Schema (POC phase)
-- Standard library (importlib for dynamic loading)
-
-### Directory Structure
-
-```
-validation-service/
-├── business-config.yaml     # Business logic config (Tier 2)
-├── rules/                   # Top-level rules directory (can be separate repo)
-│   ├── base.py             # Base class for all rules
-│   ├── loan/
-│   │   ├── rule_001_v1.py
-│   │   ├── rule_002_v1.py
-│   │   ├── rule_003_v1.py
-│   │   └── rule_004_v1.py
-│   ├── facility/
-│   │   ├── rule_003_v1.py
-│   │   ├── rule_017_v1.py
-│   │   └── rule_018_v1.py
-│   └── deal/
-│       └── rule_010_v1.py
-├── python-runner/
-│   ├── runner.py                # Main entry point
-│   ├── local-config.yaml        # Infrastructure config (Tier 1)
-│   ├── requirements.txt         # Python dependencies
-│   ├── core/                    # Core validation modules
-│   │   ├── __init__.py
-│   │   ├── validation_engine.py # Core validation business logic
-│   │   ├── rule_loader.py       # Dynamic rule discovery and loading
-│   │   ├── rule_executor.py     # Rule execution engine
-│   │   ├── config_loader.py     # Two-tier config loading with URI fetching
-│   │   └── rule_fetcher.py      # Remote rule fetching with caching
-│   ├── entity_helpers/          # Entity helper classes
-│   │   ├── __init__.py          # create_entity_helper factory
-│   │   ├── version_registry.py  # Schema URL → helper class mapping
-│   │   ├── loan_v1.py          # Loan v1 helper (schema v1.0.0)
-│   │   ├── loan_v2.py          # Loan v2 helper (schema v2.0.0)
-│   │   ├── facility_v1.py      # Facility helper
-│   │   └── deal_v1.py          # Deal helper
-│   ├── transport/               # Transport abstraction layer
-│   │   ├── __init__.py
-│   │   ├── base.py             # Abstract TransportHandler interface
-│   │   ├── pods_transport.py   # Babashka pods implementation
-│   │   ├── bencode_reader.py   # Bencode protocol utilities
-│   │   └── case_conversion.py  # snake_case ↔ kebab-case conversion
-│   └── tests/                   # Comprehensive test suite
-│       ├── test_config_loader.py
-│       ├── test_rule_fetcher.py
-│       ├── test_rule_loader.py
-│       ├── test_validation_engine.py
-│       └── ...
-├── jvm-service/
-│   └── resources/
-│       ├── library-config.edn   # Library layer config
-│       └── web-config.edn       # Web layer config
-└── models/                      # JSON Schema definitions
-    ├── loan.schema.v1.0.0.json
-    └── loan.schema.v2.0.0.json
-```
-
-**Key Structural Changes:**
-- Rules moved to top-level `rules/` directory (can be separate repository in production)
-- Two-tier configuration: `local-config.yaml` (infrastructure) + `business-config.yaml` (business logic)
-- Core modules organized in `core/` directory
-- Entity helpers support versioning with `version_registry.py`
-- Comprehensive test coverage in `tests/` directory
-
-### Configuration
-
-**Issue:** [GitHub Issue #2](https://github.com/judepayne/validation-service/issues/2)
-
-The Python runner uses a **two-tier configuration architecture** to separate infrastructure concerns (owned by service team) from business logic (owned by rules team):
-
-#### Tier 1: Local Configuration (Infrastructure)
-
-**File:** `python-runner/local-config.yaml`
-
-```yaml
-# Local Configuration (Tier 1)
-# Infrastructure config - owned by service team
-# Points to business configuration location
-
-# URI to business config (tier 2)
-# Supports: relative paths, file://, http://, https://
-business_config_uri: "../business-config.yaml"
-
-# Optional: Cache directory for remote configs and rules
-# Default: /tmp/validation-cache
-rule_cache_dir: "/tmp/validation-cache"
-
-# Optional: Enable/disable caching (default: true)
-cache_enabled: true
-```
-
-#### Tier 2: Business Configuration (Rules Logic)
-
-**File:** `business-config.yaml` (can be in separate repository)
-
-```yaml
-# Business Configuration (Tier 2)
-# Business logic config - owned by rules team
-# Defines rulesets, rules, and schema mappings
-
-# Optional: Base URI for rule files
-# If omitted, rules loaded from local ../rules/ directory
-# rules_base_uri: "https://rules-repo.example.com/v2.1/rules"
-
-# Quick rule set - typically used for real-time validation
-quick_rules:
-  # Schema-based routing (preferred)
-  "https://bank.example.com/schemas/loan/v1.0.0":
-    - rule_id: rule_001_v1
-    - rule_id: rule_002_v1
-
-  # Fallback for entities without $schema
-  loan:
-    - rule_id: rule_001_v1
-      children:
-        - rule_id: rule_042_v1
-    - rule_id: rule_055_v1
-
-  facility:
-    - rule_id: rule_003_v1
-      children:
-        - rule_id: rule_017_v1
-
-  deal:
-    - rule_id: rule_010_v1
-
-# Thorough rule set - typically used for batch/background validation
-thorough_rules:
-  "https://bank.example.com/schemas/loan/v1.0.0":
-    - rule_id: rule_001_v1
-    - rule_id: rule_002_v1
-    - rule_id: rule_003_v1
-      children:
-        - rule_id: rule_004_v1
-
-  loan:
-    - rule_id: rule_001_v1
-      children:
-        - rule_id: rule_042_v1
-        - rule_id: rule_066_v1  # Additional comprehensive check
-    - rule_id: rule_055_v1
-
-  facility:
-    - rule_id: rule_003_v1
-      children:
-        - rule_id: rule_017_v1
-        - rule_id: rule_018_v1
-
-  deal:
-    - rule_id: rule_010_v1
-    - rule_id: rule_011_v1
-
-# Schema URL to entity helper class mapping
-schema_to_helper_mapping:
-  "https://bank.example.com/schemas/loan/v1.0.0": "loan_v1.LoanV1"
-  "https://bank.example.com/schemas/loan/v2.0.0": "loan_v2.LoanV2"
-
-# Default helper when no $schema field is present
-default_helpers:
-  loan: "loan_v1.LoanV1"
-  # facility: "facility_v1.FacilityV1"
-  # deal: "deal_v1.DealV1"
-
-# Version compatibility settings
-version_compatibility:
-  allow_minor_version_fallback: true
-  strict_major_version: true
-```
-
-**Configuration Benefits:**
-
-1. **Separation of Concerns:**
-   - Service team owns infrastructure config (local-config.yaml)
-   - Rules team owns business logic config (business-config.yaml)
-   - Clear ownership boundaries
-
-2. **Independent Versioning:**
-   - Rules can be versioned and deployed separately from service
-   - Different environments can point to different rule versions
-   - A/B testing and gradual rollouts possible
-
-3. **Remote Rule Fetching:**
-   - Business config can be hosted remotely (HTTP, S3, etc.)
-   - Rules can be fetched from URIs with caching
-   - Enables centralized rule management across multiple services
-
-4. **Flexible Deployment:**
-   - Development: Local paths (`../business-config.yaml`, `../rules/`)
-   - Production: Remote URIs (`https://rules-repo.example.com/v2.1/`)
-
-**Configuration Loading:**
-- `ConfigLoader` handles two-tier config with URI fetching and caching
-- `RuleFetcher` fetches rules from URIs (file://, http://, https://)
-- SHA256-based cache keys for immutable rules
-- Backward compatible: works without `business_config_uri` or `rules_base_uri`
-
-**Configuration Notes:**
-- Hierarchical structure: Child rules only execute if parent rule status is PASS
-- Schema-based routing: Rules mapped by schema URL for version-specific validation
-- Fallback routing: Entity type keys for backward compatibility
-- Rule reuse: Same rule can appear in multiple rulesets
-- Arbitrary nesting: Supports multiple levels of rule hierarchy
-
-### Entity Helper Classes
-
-To decouple validation rules from the underlying data model structure, the Python runner provides typed helper classes for each entity type. Rules interact with these helpers rather than accessing raw JSON/dict data directly.
-
-**Purpose:**
-- Provide stable, version-independent interface to entity data
-- Isolate rules from model structure changes (field renames, nesting changes)
-- Enable model evolution without breaking existing rules
-- Improve code readability and maintainability
-
-**Helper Class Structure:**
-
-```python
-# entity_helpers/loan_v1.py
-
-from typing import Optional, Any
-from datetime import date
-
-class LoanV1:
-    """Helper class providing stable interface to loan data"""
-
-    def __init__(self, data: dict):
-        self._data = data
-
-    @property
-    def id(self) -> str:
-        """Loan identifier"""
-        return self._data.get("id", "")
-
-    @property
-    def amount(self) -> float:
-        """Loan principal amount"""
-        return self._data.get("amount", 0.0)
-
-    @property
-    def currency(self) -> str:
-        """Loan currency code (e.g., USD, EUR)"""
-        return self._data.get("currency", "")
-
-    @property
-    def facility_id(self) -> str:
-        """Parent facility identifier"""
-        return self._data.get("facility_id", "")
-
-    @property
-    def maturity_date(self) -> Optional[date]:
-        """Loan maturity date"""
-        date_str = self._data.get("maturity_date")
-        if date_str:
-            return date.fromisoformat(date_str)
-        return None
-
-    @property
-    def interest_rate(self) -> Optional[float]:
-        """Annual interest rate as decimal (e.g., 0.05 for 5%)"""
-        return self._data.get("interest_rate")
-
-    # Computed properties can be added
-    @property
-    def is_overdue(self) -> bool:
-        """Check if loan is past maturity"""
-        if self.maturity_date:
-            from datetime import date
-            return date.today() > self.maturity_date
-        return False
-
-
-class Facility:
-    """Helper class providing stable interface to facility data"""
-
-    def __init__(self, data: dict):
-        self._data = data
-
-    @property
-    def id(self) -> str:
-        return self._data.get("id", "")
-
-    @property
-    def limit(self) -> float:
-        """Facility credit limit"""
-        return self._data.get("limit", 0.0)
-
-    @property
-    def currency(self) -> str:
-        return self._data.get("currency", "")
-
-    @property
-    def deal_id(self) -> str:
-        """Parent deal identifier"""
-        return self._data.get("deal_id", "")
-
-    @property
-    def maturity_date(self) -> Optional[date]:
-        date_str = self._data.get("maturity_date")
-        if date_str:
-            return date.fromisoformat(date_str)
-        return None
-
-    @property
-    def utilization(self) -> float:
-        """Current facility utilization amount"""
-        return self._data.get("utilization", 0.0)
-
-    @property
-    def utilization_percentage(self) -> float:
-        """Computed: utilization as percentage of limit"""
-        if self.limit > 0:
-            return (self.utilization / self.limit) * 100
-        return 0.0
-
-
-class Deal:
-    """Helper class providing stable interface to deal data"""
-
-    def __init__(self, data: dict):
-        self._data = data
-
-    @property
-    def id(self) -> str:
-        return self._data.get("id", "")
-
-    @property
-    def client_id(self) -> str:
-        return self._data.get("client_id", "")
-
-    @property
-    def origination_date(self) -> Optional[date]:
-        date_str = self._data.get("origination_date")
-        if date_str:
-            return date.fromisoformat(date_str)
-        return None
-
-    @property
-    def deal_type(self) -> str:
-        return self._data.get("deal_type", "")
-
-    @property
-    def status(self) -> str:
-        return self._data.get("status", "")
-```
-
-**Helper Factory:**
-
-```python
-# entity_helpers/__init__.py (factory function)
-
-def create_entity_helper(entity_type: str, entity_data: dict):
-    """Factory function to create appropriate helper based on entity type"""
-    helpers = {
-        "loan": Loan,
-        "facility": Facility,
-        "deal": Deal
-    }
-
-    helper_class = helpers.get(entity_type)
-    if not helper_class:
-        raise ValueError(f"Unknown entity type: {entity_type}")
-
-    return helper_class(entity_data)
-```
-
-**Integration with Rule Executor:**
-
-The rule executor automatically wraps entity data in helper classes before passing to rules:
-
-```python
-# rule_executor.py (modified)
-
-from entity_helpers import create_entity_helper
-
-class RuleExecutor:
-    def __init__(self, rules, entity_type, entity_data, required_data):
-        self.rules = {r.get_id(): r for r in rules}
-        self.entity_type = entity_type
-        self.entity_data = entity_data
-        self.required_data = required_data
-
-        # Create entity helper
-        self.entity_helper = create_entity_helper(entity_type, entity_data)
-
-    def _execute_rule(self, config):
-        """Execute a single rule and its children."""
-        rule_id = config["rule_id"]
-        rule = self.rules.get(rule_id)
-
-        if not rule:
-            # ... handle missing rule ...
-            pass
-
-        # Provide entity helper to rule (not raw data!)
-        rule.entity = self.entity_helper
-
-        # Provide required data to rule
-        rule_required = rule.required_data()
-        rule_data = {k: self.required_data.get(k) for k in rule_required}
-        rule.set_required_data(rule_data)
-
-        # Execute rule
-        status, message = rule.run()
-        # ... rest of execution logic ...
-```
-
-**Model Evolution Example:**
-
-Initial model structure:
+**Response:**
 ```json
 {
-  "$schema": "https://bank.example.com/schemas/loan/v1.0.0",
-  "id": "LOAN-123",
-  "amount": 500000,
-  "currency": "USD"
-}
-```
-
-Rule accesses via helper:
-```python
-loan_amount = self.entity.amount  # Works
-```
-
-Model restructured later:
-```json
-{
-  "$schema": "https://bank.example.com/schemas/loan/v2.0.0",
-  "id": "LOAN-123",
-  "financial": {
-    "principal_amount": 500000,
-    "currency_code": "USD"
+  "rule_001_v1": {
+    "rule_id": "rule_001_v1",
+    "entity_type": "loan",
+    "description": "JSON Schema validation",
+    "required_data": [],
+    "field_dependencies": [["principal", "financial.principal_amount"]],
+    "applicable_schemas": ["https://bank.example.com/schemas/loan/v1.0.0"]
   }
 }
 ```
-
-Only helper updated:
-```python
-class LoanV1:
-    @property
-    def amount(self) -> float:
-        # Updated to handle new structure
-        return self._data.get("financial", {}).get("principal_amount", 0.0)
-
-    @property
-    def currency(self) -> str:
-        return self._data.get("financial", {}).get("currency_code", "")
-```
-
-**Rules remain unchanged** - they still call `self.entity.amount` and get the correct value!
-
-**Benefits:**
-- **Isolation:** 100+ existing rules unaffected by model restructure
-- **Maintenance:** Single point of change (helper class) vs. many rules
-- **Versioning:** Helpers can support multiple model versions during transitions
-- **Testing:** Helper classes can be unit tested independently
-- **Documentation:** Helper properties serve as data dictionary
-
-#### Field Access Tracking
-
-**Purpose:** Track which data model fields are actually accessed by rules to support model change impact analysis.
-
-Entity helper classes include instrumentation to record field access, enabling analysis of rule dependencies on specific data fields.
-
-**Implementation:**
-
-```python
-# entity_helpers/loan_v1.py (enhanced with tracking)
-
-from typing import Optional, Any, Set
-from datetime import date
-
-class LoanV1:
-    """Helper class with field access tracking"""
-
-    def __init__(self, data: dict, track_access: bool = False):
-        self._data = data
-        self._track_access = track_access
-        self._accessed_fields: Set[str] = set()
-
-    def _record_access(self, field_name: str):
-        """Record that a field was accessed"""
-        if self._track_access:
-            self._accessed_fields.add(field_name)
-
-    def get_accessed_fields(self) -> Set[str]:
-        """Return set of fields accessed during rule execution"""
-        return self._accessed_fields
-
-    @property
-    def amount(self) -> float:
-        """Loan principal amount"""
-        self._record_access("amount")
-        return self._data.get("amount", 0.0)
-
-    @property
-    def currency(self) -> str:
-        """Loan currency code"""
-        self._record_access("currency")
-        return self._data.get("currency", "")
-
-    @property
-    def maturity_date(self) -> Optional[date]:
-        """Loan maturity date"""
-        self._record_access("maturity_date")
-        date_str = self._data.get("maturity_date")
-        if date_str:
-            return date.fromisoformat(date_str)
-        return None
-
-    # ... other properties similarly instrumented
-```
-
-**Usage in Rule Executor:**
-
-```python
-# rule_executor.py (modified for tracking)
-
-from entity_helpers import create_entity_helper
-
-class RuleExecutor:
-    def __init__(self, rules, entity_type, entity_data, required_data,
-                 track_field_access=False):
-        self.rules = {r.get_id(): r for r in rules}
-        self.entity_type = entity_type
-        self.entity_data = entity_data
-        self.required_data = required_data
-        self.track_field_access = track_field_access
-
-        # Create entity helper with tracking enabled
-        self.entity_helper = create_entity_helper(
-            entity_type,
-            entity_data,
-            track_access=track_field_access
-        )
-
-    def get_field_dependencies(self, rule_id: str) -> Set[str]:
-        """Get fields accessed by a specific rule"""
-        rule = self.rules.get(rule_id)
-        if not rule:
-            return set()
-
-        # Reset tracking
-        self.entity_helper._accessed_fields.clear()
-
-        # Execute rule
-        rule.entity = self.entity_helper
-        rule.run()
-
-        # Return accessed fields
-        return self.entity_helper.get_accessed_fields()
-```
-
-**Dependency Analysis Script:**
-
-`scripts/catalog_rule_dependencies.sh`:
-
-```bash
-#!/bin/bash
-# Catalog which data fields each rule depends on
-
-set -e
-
-PYTHON_RUNNER_DIR="python-runner"
-OUTPUT_FILE="docs/rule_field_dependencies.json"
-
-echo "Analyzing rule field dependencies..."
-echo "This may take a few minutes..."
-
-cd "$PYTHON_RUNNER_DIR"
-
-python3 << 'EOF'
-import json
-import sys
-from pathlib import Path
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from validation_engine import ValidationEngine
-from entity_helpers import Loan, Facility, Deal
-from rule_loader import RuleLoader
-from rule_executor import RuleExecutor
-import yaml
-
-# Load configuration (two-tier)
-from core.config_loader import ConfigLoader
-config_loader = ConfigLoader("local-config.yaml")
-config = config_loader.get_business_config()
-
-# Sample test data for each entity type
-test_data = {
-    "loan": {
-        "$schema": "https://bank.example.com/schemas/loan/v1.0.0",
-        "id": "LOAN-TEST",
-        "amount": 500000,
-        "currency": "USD",
-        "facility_id": "FAC-TEST",
-        "maturity_date": "2028-12-31",
-        "interest_rate": 0.05
-    },
-    "facility": {
-        "$schema": "https://bank.example.com/schemas/facility/v1.0.0",
-        "id": "FAC-TEST",
-        "limit": 1000000,
-        "currency": "USD",
-        "deal_id": "DEAL-TEST",
-        "maturity_date": "2029-12-31",
-        "utilization": 500000
-    },
-    "deal": {
-        "$schema": "https://bank.example.com/schemas/deal/v1.0.0",
-        "id": "DEAL-TEST",
-        "client_id": "CLIENT-TEST",
-        "origination_date": "2024-01-01",
-        "deal_type": "revolving",
-        "status": "active"
-    }
-}
-
-# Sample required data (minimal for testing)
-required_data_samples = {
-    "parent": test_data["facility"],
-    "all_children": [],
-    "all_siblings": []
-}
-
-def analyze_rules(config, mode):
-    """Analyze all rules in a given mode"""
-    results = {}
-
-    for entity_type in ["loan", "facility", "deal"]:
-        mode_key = f"{mode}_rules"
-        rule_configs = config.get(mode_key, {}).get(entity_type, [])
-
-        if not rule_configs:
-            continue
-
-        loader = RuleLoader(config)
-        rules = loader.load_rules(rule_configs)
-
-        # Execute each rule with field tracking enabled
-        executor = RuleExecutor(
-            rules=rules,
-            entity_type=entity_type,
-            entity_data=test_data[entity_type],
-            required_data=required_data_samples,
-            track_field_access=True
-        )
-
-        for rule_config in rule_configs:
-            rule_id = rule_config["rule_id"]
-
-            try:
-                # Get field dependencies
-                fields = executor.get_field_dependencies(rule_id)
-
-                rule = [r for r in rules if r.get_id() == rule_id][0]
-
-                results[rule_id] = {
-                    "entity_type": entity_type,
-                    "mode": mode,
-                    "description": rule.description(),
-                    "accessed_fields": sorted(list(fields)),
-                    "required_data": rule.required_data()
-                }
-
-                print(f"  {rule_id}: {len(fields)} fields accessed")
-
-            except Exception as e:
-                print(f"  {rule_id}: ERROR - {str(e)}", file=sys.stderr)
-                results[rule_id] = {
-                    "error": str(e)
-                }
-
-    return results
-
-# Analyze both modes
-print("\nAnalyzing inline rules...")
-inline_results = analyze_rules(config, "inline")
-
-print("\nAnalyzing batch rules...")
-batch_results = analyze_rules(config, "batch")
-
-# Combine results
-all_results = {
-    "inline": inline_results,
-    "batch": batch_results,
-    "generated_at": str(datetime.now())
-}
-
-# Write to JSON file
-output_path = Path("../docs/rule_field_dependencies.json")
-output_path.parent.mkdir(parents=True, exist_ok=True)
-
-with open(output_path, "w") as f:
-    json.dump(all_results, f, indent=2)
-
-print(f"\n✓ Dependency analysis complete!")
-print(f"Results written to: {output_path}")
-
-# Generate summary report
-print("\n=== Field Dependency Summary ===")
-all_fields = set()
-for mode_results in [inline_results, batch_results]:
-    for rule_id, rule_info in mode_results.items():
-        if "accessed_fields" in rule_info:
-            all_fields.update(rule_info["accessed_fields"])
-
-print(f"Total unique fields accessed: {len(all_fields)}")
-print(f"Fields: {sorted(all_fields)}")
-
-EOF
-
-echo ""
-echo "✓ Analysis complete!"
-echo "Results: $OUTPUT_FILE"
-```
-
-**Example Output** (`docs/rule_field_dependencies.json`):
-
-```json
-{
-  "inline": {
-    "rule_001_v2": {
-      "entity_type": "loan",
-      "mode": "inline",
-      "description": "Loan amount must not exceed facility limit",
-      "accessed_fields": ["amount"],
-      "required_data": ["parent"]
-    },
-    "rule_055_v1": {
-      "entity_type": "loan",
-      "mode": "inline",
-      "description": "Currency must match facility currency",
-      "accessed_fields": ["currency"],
-      "required_data": ["parent"]
-    }
-  },
-  "batch": {
-    "rule_001_v2": {
-      "entity_type": "loan",
-      "mode": "batch",
-      "accessed_fields": ["amount", "facility_id"],
-      "required_data": ["parent"]
-    }
-  },
-  "generated_at": "2026-02-02T15:30:00"
-}
-```
-
-**Use Cases:**
-
-1. **Model Change Impact Analysis:**
-   ```bash
-   # Before removing "interest_rate" field
-   ./scripts/catalog_rule_dependencies.sh
-   grep "interest_rate" docs/rule_field_dependencies.json
-   # Shows which rules would be affected
-   ```
-
-2. **Model Version Planning:**
-   ```bash
-   # Check which rules use "amount" vs "principal_amount"
-   grep "amount" docs/rule_field_dependencies.json
-   # Plan migration strategy
-   ```
-
-3. **Rule Documentation:**
-   - Automatically document what data each rule actually uses
-   - Verify rule required_data declarations are complete
-   - Identify unused fields in data model
-
-4. **Regression Testing:**
-   - Run before and after helper class changes
-   - Ensure field access patterns haven't changed unexpectedly
-   - Verify backward compatibility
-
-**Benefits:**
-- **Visibility:** Know exactly which rules depend on which fields
-- **Safe Evolution:** Remove fields confidently (no hidden dependencies)
-- **Impact Analysis:** Quantify scope of model changes
-- **Documentation:** Auto-generated field usage documentation
-- **Testing:** Verify helper class changes don't break field access
-
-This introspection capability transforms model evolution from risky to manageable by providing clear visibility into rule-field dependencies.
-
-### Rule Class Interface
-
-Each rule is a Python class following this interface:
-
-```python
-# Example: rules/loan/rule_001_v1.py
-
-from rules.base import ValidationRule
-from entity_helpers import Facility
-
-class Rule(ValidationRule):
-    """
-    Loan amount must not exceed facility limit.
-
-    All rules use the standard class name 'Rule'.
-    The rule ID is derived from the filename (rule_001_v1.py → rule_001_v1).
-    """
-
-    def validates(self) -> str:
-        """Return entity type this rule validates."""
-        return "loan"
-
-    def required_data(self) -> list[str]:
-        """
-        Return list of required data vocabulary terms.
-
-        Returns terms from fixed vocabulary:
-        - Hierarchical: parent, all_children, all_siblings, parent's_parent
-        - Related: related_parties, parent's_legal_document, client_reference_data
-        """
-        return ["parent"]  # Need parent facility data
-
-    def description(self) -> str:
-        """Return plain English description of rule."""
-        return "Loan amount must not exceed facility limit"
-
-    def set_required_data(self, data: dict) -> None:
-        """
-        Receive required data before execution.
-
-        Args:
-            data: Dict with vocabulary terms as keys
-                  e.g., {"parent": {...}, "all_siblings": [...]}
-        """
-        parent_data = data.get("parent")
-        # Wrap parent facility data in helper for stable interface
-        self.parent_facility = Facility(parent_data) if parent_data else None
-
-    def run(self) -> tuple[str, str]:
-        """
-        Execute validation rule.
-
-        Note: self.entity is a Loan helper instance (provided by rule executor)
-
-        Returns:
-            Tuple of (status, message)
-            status: "PASS" | "FAIL" | "NORUN"
-            message: Error description (empty string for PASS)
-        """
-        if not self.parent_facility:
-            return ("NORUN", "Parent facility data not available")
-
-        # Use entity helpers instead of raw dict access
-        loan_amount = self.entity.amount
-        facility_limit = self.parent_facility.limit
-
-        if loan_amount > facility_limit:
-            return ("FAIL",
-                    f"Loan amount {loan_amount} exceeds facility limit {facility_limit}")
-
-        return ("PASS", "")
-```
-
-**Rule Naming Convention:**
-- File: `rule_<id>_v<version>.py` (e.g., `rule_001_v1.py`, `rule_001_v2.py`)
-- Class: Always `Rule` (standard name for all rules)
-- Rule ID: Automatically derived from filename (e.g., `rule_001_v1.py` → `rule_001_v1`)
-- Class docstring: Brief description of rule purpose
-- Version starts at v1, increments with each update
-
-**Rule Versioning Strategy:**
-
-Rules are versioned to enable safe updates and rollbacks:
-
-```
-rules/loan/
-  rule_001_v1.py    # Original version
-  rule_001_v2.py    # Updated version (new logic)
-  rule_042_v1.py
-```
-
-Configuration specifies which version to use:
-```yaml
-inline_rules:
-  loan:
-    - rule_id: rule_001_v2      # Use version 2
-      children:
-        - rule_id: rule_042_v1  # Use version 1
-```
-
-Benefits:
-- Safe updates: Deploy new version, test in staging, promote to production
-- Easy rollback: Change config back to v1 if v2 has issues
-- A/B testing: Different configs can use different versions
-- Audit trail: Clear history of rule changes in version control
-
-When updating a rule:
-1. Copy existing file (e.g., `rule_001_v1.py` → `rule_001_v2.py`)
-2. Modify logic in new version (class name remains `Rule`)
-3. Test new version (see Rule Testing Framework below)
-4. Update config to reference new version (`rule_001_v2`)
-5. Keep old version for rollback capability
-
-Note: All rule classes use the standard name `Rule`. The rule ID is derived from the filename, so no class name changes are needed when versioning.
-
-### Rule Testing Framework
-
-A simple testing framework enables rule authors to verify rule logic before deployment.
-
-**Test File Convention:**
-- Test file: `rule_<id>_v<version>_test.py` (e.g., `rule_055_v1_test.py`)
-- Located in same directory as rule being tested
-- Uses standard Python `assert` statements
-
-**Simple Test Helper:**
-
-```python
-# rule_test_helper.py
-
-from entity_helpers import create_entity_helper
-from typing import Any, Dict, Type
-
-class RuleTestHelper:
-    """Simple helper for testing validation rules"""
-
-    @staticmethod
-    def test_rule(
-        rule_class: Type,
-        entity_type: str,
-        entity_data: Dict[str, Any],
-        required_data: Dict[str, Any],
-        expected_status: str,
-        expected_message: str = None
-    ):
-        """
-        Test a rule with given inputs and verify expected output.
-
-        Args:
-            rule_class: The rule class to test
-            entity_type: Type of entity ("loan", "facility", "deal")
-            entity_data: Entity data as dict
-            required_data: Additional required data as dict
-            expected_status: Expected status ("PASS", "FAIL", "NORUN")
-            expected_message: Expected message (if None, only checks status)
-        """
-        # Create rule instance
-        rule = rule_class()
-
-        # Provide entity helper
-        rule.entity = create_entity_helper(entity_type, entity_data)
-
-        # Provide required data
-        rule.set_required_data(required_data)
-
-        # Execute rule
-        status, message = rule.run()
-
-        # Verify results
-        assert status == expected_status, \
-            f"Expected status {expected_status}, got {status}"
-
-        if expected_message is not None:
-            assert message == expected_message, \
-                f"Expected message '{expected_message}', got '{message}'"
-
-        print(f"✓ Test passed: {rule.get_id()} - {rule.description()}")
-```
-
-**Example Test File:**
-
-```python
-# rules/loan/rule_055_v1_test.py
-
-import sys
-sys.path.append('../..')  # Add parent dirs to path
-
-from rule_055_v1 import Rule
-from rule_test_helper import RuleTestHelper
-
-def test_currency_match_pass():
-    """Test that matching currencies pass validation"""
-    RuleTestHelper.test_rule(
-        rule_class=Rule,
-        rule_id="rule_055_v1",
-        entity_type="loan",
-        entity_data={
-            "$schema": "https://bank.example.com/schemas/loan/v1.0.0",
-            "id": "LOAN-123",
-            "amount": 500000,
-            "currency": "USD",
-            "facility_id": "FAC-789"
-        },
-        required_data={
-            "parent": {
-                "$schema": "https://bank.example.com/schemas/facility/v1.0.0",
-                "id": "FAC-789",
-                "limit": 1000000,
-                "currency": "USD"
-            }
-        },
-        expected_status="PASS",
-        expected_message=""
-    )
-
-def test_currency_mismatch_fail():
-    """Test that mismatched currencies fail validation"""
-    RuleTestHelper.test_rule(
-        rule_class=Rule,
-        entity_type="loan",
-        entity_data={
-            "$schema": "https://bank.example.com/schemas/loan/v1.0.0",
-            "id": "LOAN-123",
-            "amount": 500000,
-            "currency": "USD",
-            "facility_id": "FAC-789"
-        },
-        required_data={
-            "parent": {
-                "$schema": "https://bank.example.com/schemas/facility/v1.0.0",
-                "id": "FAC-789",
-                "limit": 1000000,
-                "currency": "EUR"
-            }
-        },
-        expected_status="FAIL",
-        expected_message="Loan currency USD does not match facility currency EUR"
-    )
-
-def test_missing_parent_norun():
-    """Test that missing parent data returns NORUN"""
-    RuleTestHelper.test_rule(
-        rule_class=Rule,
-        entity_type="loan",
-        entity_data={
-            "$schema": "https://bank.example.com/schemas/loan/v1.0.0",
-            "id": "LOAN-123",
-            "amount": 500000,
-            "currency": "USD"
-        },
-        required_data={},
-        expected_status="NORUN",
-        expected_message="Parent facility data not available"
-    )
-
-if __name__ == "__main__":
-    # Run all tests
-    test_currency_match_pass()
-    test_currency_mismatch_fail()
-    test_missing_parent_norun()
-    print("\n✓ All tests passed!")
-```
-
-**Running Tests:**
-
-```bash
-# Run single rule test
-cd python-runner/rules/loan
-python rule_055_v1_test.py
-
-# Run all tests in a directory
-python -m pytest loan/
-
-# Run all tests in project
-python -m pytest rules/
-```
-
-**Benefits:**
-- Simple: No complex test framework dependencies
-- Fast: Quick feedback for rule authors
-- Repeatable: Tests serve as documentation and regression suite
-- Safe: Verify rule changes before deployment
-
-**POC Testing Strategy:**
-- Rule authors write at least 3 test cases: PASS, FAIL, NORUN scenarios
-- Tests run locally before committing rule changes
-- Optional: CI/CD runs all rule tests on pull requests (future enhancement)
-
-### Required Data Vocabulary
-
-Rules reference additional data using a **fixed, controlled vocabulary**. The Python runner validates that rules only use approved terms.
-
-**Hierarchical Relationships:**
-- `parent` - Immediate parent entity
-- `all_children` - All child entities
-- `all_siblings` - All sibling entities (same parent)
-- `parent's_parent` - Grandparent entity
-- `first_child` - First child entity (if ordering exists)
-- `last_child` - Last child entity
-
-**Related Entities:**
-- `related_parties` - Related party entities
-- `parent's_legal_document` - Legal document associated with parent
-- `client_reference_data` - Client master data
-- `collateral_data` - Associated collateral information
-- `historical_data` - Historical versions of entity
-
-**Temporal:**
-- `previous_version` - Previous version of this entity
-- `all_versions` - All historical versions
-
-**Schema Handling (RESOLVED):**
-Schemas are NOT fetched as required data. Every entity contains a `$schema` field (e.g., `"$schema": "https://bank.example.com/schemas/loan/v1.0.0"`) that identifies its schema version. Schemas are stored in the local `models/` directory and loaded directly by rules when needed. The `$schema` URL is used to determine which version-specific rules apply to the entity.
-
-Example rule using schema validation:
-```python
-from jsonschema import validate, ValidationError
-
-class RuleSchemaValidation:
-    def required_data(self) -> list[str]:
-        return ["schema"]  # Request schema from JVM
-
-    def set_required_data(self, data: dict) -> None:
-        self.schema = data.get("schema")
-
-    def run(self) -> tuple[str, str]:
-        if not self.schema:
-            return ("NORUN", "Schema not available")
-
-        try:
-            validate(instance=self.entity_data, schema=self.schema)
-            return ("PASS", "")
-        except ValidationError as e:
-            return ("FAIL", f"Schema validation failed: {e.message}")
-```
-
-The vocabulary is extensible but changes require updates to both the Python runner's validation logic and the coordination service's data provisioning capabilities.
-
-### Implementation with Transport Abstraction
-
-The Python runner implementation separates transport concerns from validation business logic.
-
-#### Core Validation Engine
-
-```python
-# validation_engine.py
-import yaml
-from rule_loader import RuleLoader
-from rule_executor import RuleExecutor
-
-class ValidationEngine:
-    """Core validation business logic, independent of transport"""
-
-    def __init__(self, config_path):
-        with open(config_path) as f:
-            self.config = yaml.safe_load(f)
-        self.rule_loader = RuleLoader(self.config)
-
-    def get_required_data(self, entity_type, schema_url, mode):
-        """
-        Phase 1: Introspect rules and return required data.
-
-        Returns list of vocabulary terms needed for validation.
-
-        Args:
-            schema_url: Used to determine which version-specific rules to load
-        """
-        # Load version-specific rules based on schema_url
-        rule_configs = self._get_rules_for_mode(entity_type, mode, schema_url)
-        rules = self.rule_loader.load_rules(rule_configs)
-
-        # Collect all required_data from all rules
-        required = set()
-        for rule in rules:
-            required.update(rule.required_data())
-
-        return list(required)
-
-    def validate(self, entity_type, entity_data, mode, required_data):
-        """
-        Phase 2: Execute rules and return hierarchical results.
-
-        Returns structured results matching config hierarchy.
-        """
-        # Load rules
-        rule_configs = self._get_rules_for_mode(entity_type, mode)
-        rules = self.rule_loader.load_rules(rule_configs)
-
-        # Execute with hierarchy
-        executor = RuleExecutor(rules, entity_data, required_data)
-        results = executor.execute_hierarchical(rule_configs)
-
-        return results
-
-    def _get_rules_for_mode(self, entity_type, mode):
-        """Extract rule configs for given entity type and mode."""
-        mode_key = f"{mode}_rules"
-        return self.config.get(mode_key, {}).get(entity_type, [])
-```
-
-#### Transport Layer
-
-```python
-# transport/base.py
-from abc import ABC, abstractmethod
-from typing import Any, Dict
-
-class TransportHandler(ABC):
-    """Abstract base class for transport layer"""
-
-    @abstractmethod
-    def start(self):
-        """Initialize transport and start listening for requests"""
-        pass
-
-    @abstractmethod
-    def send_response(self, request_id: str, result: Any):
-        """Send successful response to client"""
-        pass
-
-    @abstractmethod
-    def send_error(self, request_id: str, error: str):
-        """Send error response to client"""
-        pass
-
-    @abstractmethod
-    def receive_request(self) -> tuple[str, str, Dict[str, Any]]:
-        """
-        Receive next request from client.
-
-        Returns:
-            Tuple of (request_id, function_name, arguments_dict)
-        """
-        pass
-```
-
-```python
-# transport/pods_transport.py
-import sys
-import bencode
-from transport.base import TransportHandler
-from typing import Any, Dict
-
-class PodsTransportHandler(TransportHandler):
-    """Babashka pods transport implementation using bencode over stdin/stdout"""
-
-    def start(self):
-        """Pods transport is ready as soon as process starts"""
-        pass
-
-    def send_response(self, request_id: str, result: Any):
-        """Encode and send response via stdout"""
-        response = {"id": request_id, "value": result}
-        sys.stdout.buffer.write(bencode.encode(response))
-        sys.stdout.buffer.flush()
-
-    def send_error(self, request_id: str, error: str):
-        """Encode and send error via stdout"""
-        response = {"id": request_id, "error": error}
-        sys.stdout.buffer.write(bencode.encode(response))
-        sys.stdout.buffer.flush()
-
-    def receive_request(self) -> tuple[str, str, Dict[str, Any]]:
-        """Read and decode request from stdin"""
-        msg = bencode.decode(sys.stdin.buffer)
-
-        if msg.get("op") != "invoke":
-            raise ValueError(f"Unsupported operation: {msg.get('op')}")
-
-        return (
-            msg.get("id"),
-            msg.get("var"),
-            msg.get("args", {})
-        )
-```
-
-#### Main Entry Point
-
-```python
-# runner.py
-import sys
-from transport.pods_transport import PodsTransportHandler
-from validation_engine import ValidationEngine
-
-def main():
-    """Main entry point with pluggable transport"""
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "./local-config.yaml"
-
-    # Initialize components
-    engine = ValidationEngine(config_path)
-    transport = PodsTransportHandler()  # Pluggable: could be GrpcTransportHandler
-
-    transport.start()
-
-    # Main request loop
-    while True:
-        try:
-            request_id, function_name, args = transport.receive_request()
-
-            # Dispatch to validation engine
-            if function_name == "get_required_data":
-                result = engine.get_required_data(
-                    args["entity_type"],
-                    args["entity_data"],
-                    args["mode"]
-                )
-            elif function_name == "validate":
-                result = engine.validate(
-                    args["entity_type"],
-                    args["entity_data"],
-                    args["mode"],
-                    args["required_data"]
-                )
-            else:
-                raise ValueError(f"Unknown function: {function_name}")
-
-            transport.send_response(request_id, result)
-
-        except Exception as e:
-            transport.send_error(request_id, str(e))
-
-if __name__ == "__main__":
-    main()
-```
-
-**Key Design Points:**
-
-1. **ValidationEngine** contains all business logic and has no knowledge of transport
-2. **TransportHandler** abstraction allows swapping protocols without changing business logic
-3. **runner.py** is thin glue code that connects transport to engine
-4. Future gRPC implementation only requires implementing `GrpcTransportHandler`
-5. Business logic can be unit tested without any transport dependencies
-
-### Rule Execution Logic
-
-```python
-# rule_executor.py (simplified)
-
-import time
-
-class RuleExecutor:
-    def __init__(self, rules, entity_data, required_data):
-        self.rules = {r.get_id(): r for r in rules}
-        self.entity_data = entity_data
-        self.required_data = required_data
-
-        # Simple cache for entity and required data
-        self.cache = {
-            "entity": entity_data,
-            "required": required_data
-        }
-
-    def execute_hierarchical(self, rule_configs):
-        """
-        Execute rules respecting hierarchical dependencies.
-
-        Args:
-            rule_configs: List of rule config dicts with structure:
-                [{"rule_id": "rule_001", "children": [...]}, ...]
-
-        Returns:
-            Hierarchical results structure matching config
-        """
-        results = []
-        for config in rule_configs:
-            result = self._execute_rule(config)
-            results.append(result)
-        return results
-
-    def _execute_rule(self, config):
-        """Execute a single rule and its children."""
-        rule_id = config["rule_id"]
-        rule = self.rules.get(rule_id)
-
-        if not rule:
-            return {
-                "rule_id": rule_id,
-                "status": "NORUN",
-                "message": f"Rule {rule_id} not found",
-                "execution_time_ms": 0,
-                "children": []
-            }
-
-        # Provide required data to rule
-        rule_required = rule.required_data()
-        rule_data = {k: self.required_data.get(k) for k in rule_required}
-        rule.set_required_data(rule_data)
-
-        # Execute rule with timing
-        start = time.time()
-        status, message = rule.run()
-        elapsed_ms = int((time.time() - start) * 1000)
-
-        # Build result
-        result = {
-            "rule_id": rule_id,
-            "description": rule.description(),
-            "status": status,
-            "message": message,
-            "execution_time_ms": elapsed_ms,
-            "children": []
-        }
-
-        # Execute children only if parent passed
-        if status == "PASS" and "children" in config:
-            for child_config in config["children"]:
-                child_result = self._execute_rule(child_config)
-                result["children"].append(child_result)
-        elif status in ["FAIL", "NORUN"] and "children" in config:
-            # Mark children as NORUN since parent didn't pass
-            for child_config in config["children"]:
-                result["children"].append(self._mark_skipped(child_config))
-
-        return result
-
-    def _mark_skipped(self, config):
-        """Mark a rule and its children as skipped."""
-        rule_id = config["rule_id"]
-        rule = self.rules.get(rule_id)
-
-        result = {
-            "rule_id": rule_id,
-            "description": rule.description() if rule else "",
-            "status": "NORUN",
-            "message": "Parent rule did not pass, rule skipped",
-            "execution_time_ms": 0,
-            "children": []
-        }
-
-        # Recursively mark children
-        if "children" in config:
-            for child_config in config["children"]:
-                result["children"].append(self._mark_skipped(child_config))
-
-        return result
-```
-
-### Caching Strategy
-
-The Python runner implements simple in-memory caching for the duration of a validation job:
-
-**What is cached:**
-1. **Entity data**: The entity being validated (same for all rules)
-2. **Required data**: Additional data fetched by JVM (reused across rules)
-3. **Loaded rule instances**: Rule objects instantiated once
-
-**Cache lifetime:**
-- Single validation job only
-- Cache cleared when runner process terminates
-- No cross-request caching (each spawn is fresh)
-
-**Implementation:**
-Simple Python dict stored in RuleExecutor instance.
-
-## Coordination Service Integration
-
-### Service Contract
-
-The coordination service provides additional data required by validation rules. It is an external service maintained separately.
-
-**Assumed Interface (to be defined):**
-
-```http
-GET /api/data/parent/{entity_type}/{entity_id}
-Returns: Parent entity data
-
-GET /api/data/children/{entity_type}/{entity_id}
-Returns: Array of child entity data
-
-GET /api/data/siblings/{entity_type}/{entity_id}
-Returns: Array of sibling entity data
-
-GET /api/data/client/{client_id}
-Returns: Client reference data
-
-GET /api/data/related_parties/{entity_id}
-Returns: Related party entities
-
-... (one endpoint per vocabulary term)
-
-Note: Schemas are stored in the models/ directory and loaded from local files. Schema URLs in entity data ($schema field) determine which version-specific rules apply. Schemas are NOT fetched from the coordination service.
-```
-
-**Response Format:**
-```json
-{
-  "vocabulary_term": "parent",
-  "entity_type": "facility",
-  "entity_id": "FAC-789",
-  "data": {
-    "$schema": "https://bank.example.com/schemas/facility/v1.0.0",
-    "id": "FAC-789",
-    "limit": 1000000,
-    "currency": "USD",
-    ...
-  }
-}
-```
-
-### Error Handling
-
-**Coordination service failures:**
-- Timeout: JVM retries based on config (retry_attempts, retry_delay_ms)
-- 404 Not Found: Treat as missing data, validation may return NORUN
-- 500 Server Error: Log error, retry, return error to client if all retries fail
-
-**Impact on validation:**
-- If required data cannot be fetched, affected rules return NORUN
-- Validation continues for rules that don't need the missing data
-- Clear error messages indicate which data was unavailable
-
-## Error Handling & Edge Cases
-
-### Rule Execution Errors
-
-**Exception during rule.run():**
-- Catch exception in rule_executor
-- Return status=NORUN with error message
-- Log full stack trace for debugging
-- Continue with remaining rules
-
-**Missing required data:**
-- Rule returns NORUN with message "Required data not available"
-- Validation continues
-
-**Rule loading failures:**
-- Log error with rule_id and file path
-- Skip rule (treat as NORUN in results)
-- Don't fail entire validation
-
-### Process Management
-
-**Python runner spawn failure:**
-- Log error with command and exit code
-- Return HTTP 500 to client with clear error message
-- Alert monitoring system
-
-**Python runner timeout:**
-- Kill process after timeout (configured in library-config.edn)
-- Return timeout error to client
-- Log for investigation
-
-**Python runner crash:**
-- Detect via exit code
-- Log stderr output
-- Return error to client
-
-### Data Validation
-
-**Invalid entity_data:**
-- Validate against expected schema (if defined)
-- Return HTTP 400 with validation errors
-- Don't spawn Python runner
-
-**Invalid configuration:**
-- Validate on service startup
-- Fail fast if config is invalid
-- Clear error messages about what's wrong
-
-**Rule references non-existent rule:**
-- Python runner logs error
-- Rule marked as NORUN in results
-- Validation continues
-
-## Performance Considerations
-
-### Performance Requirements
-
-**Inline mode:**
-- Target: Sub-second response time
-- Typical: 10-20 rules per entity
-- Budget: ~50ms per rule on average
-
-**Batch mode:**
-- Target: Process 1000 entities in reasonable time
-- Parallel processing capability (future)
-
-### Optimization Strategies
-
-**Python runner:**
-- **Single persistent pod** - Created once at service startup, not per request
-- Eliminates pod spawn overhead for each validation
-- Cache entity and required data during execution
-- Load rule classes once at initialization
-- Sequential execution (simpler, predictable)
-- Reused across all inline and batch requests
-
-**JVM service:**
-- Parallel coordination service calls (fetch all required data concurrently)
-- Connection pooling for coordination service
-- Async batch processing (future)
-
-**Coordination service:**
-- Implement caching on coordination service side
-- Batch data fetching APIs (future optimization)
-
-### Monitoring & Alerting
-
-**Key metrics:**
-- Per-rule execution time (identify slow rules)
-- Pod communication latency (bencode protocol overhead)
-- Coordination service latency
-- End-to-end validation time
-- Batch processing throughput
-- Error rates by rule and by service
-
-**Alert conditions:**
-- Rule exceeds performance threshold
-- Validation timeout
-- High error rate (>5% in 5 minutes)
-- Coordination service degradation
-
-## Deployment
-
-Both POC and production phases use **Docker containerization** for packaging and deployment, ensuring consistent environments across development, staging, and production.
-
-### POC Phase (Implemented)
-
-**Packaging:**
-
-The POC is packaged as a single Docker image using **multi-stage build** containing:
-- Clojure service (JVM) - built to uberjar
-- Python 3.10+ runtime
-- Python runner code and dependencies
-- JSON Schema models
-- Validation rules
-
-**Multi-Stage Dockerfile:**
-```dockerfile
-# ============ Builder Stage ============
-FROM clojure:temurin-21-tools-deps-bookworm AS builder
-
-WORKDIR /build/jvm-service
-COPY jvm-service/deps.edn .
-COPY jvm-service/build.clj .
-
-# Download dependencies (cached layer)
-RUN clojure -P -M:build
-
-# Copy source and build uberjar
-COPY jvm-service/src src/
-COPY jvm-service/resources resources/
-RUN clojure -T:build uber
-
-# ============ Runtime Stage ============
-FROM eclipse-temurin:21-jre-jammy
-
-# Install Python 3 and dependencies
-RUN apt-get update && \
-    apt-get install -y python3 python3-pip python3-venv && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-# Copy models directory (schemas)
-COPY models/ models/
-
-# Copy Python runner
-COPY python-runner/ python-runner/
-RUN pip3 install --no-cache-dir -r python-runner/requirements.txt
-
-# Copy JVM service
-COPY jvm-service/config.edn jvm-service/
-COPY jvm-service/resources jvm-service/resources/
-COPY --from=builder /build/jvm-service/target/validation-service-0.1.0-SNAPSHOT-standalone.jar jvm-service/validation-service.jar
-
-# Set working directory (required for relative paths)
-WORKDIR /app/jvm-service
-
-EXPOSE 8080
-ENV JAVA_OPTS="-Xmx512m -Xms256m"
-ENV PYTHONUNBUFFERED=1
-
-CMD ["sh", "-c", "java $JAVA_OPTS -jar validation-service.jar"]
-```
-
-**Container Directory Structure:**
-```
-/app/
-├── business-config.yaml              # Business logic configuration
-├── rules/                            # Validation rules (top-level)
-│   └── loan/
-├── models/                           # JSON schemas
-│   └── loan.schema.v1.0.0.json
-├── python-runner/                    # Python validation engine
-│   ├── runner.py
-│   └── local-config.yaml
-└── jvm-service/                      # Clojure web service (WORKDIR)
-    ├── resources/
-    │   ├── library-config.edn
-    │   └── web-config.edn
-    └── validation-service.jar
-```
-
-**Key Features:**
-- **Multi-stage build**: Reduces final image size by ~50%
-- **Single persistent pod**: Python runner created once at startup, reused for all requests
-- **Relative path support**: Automatic normalization of file:// URIs for container compatibility
-- **Working directory**: `/app/jvm-service` enables correct relative path resolution
-
-**Single-instance deployment:**
-```
-┌────────────────────────────┐
-│  Docker Container          │
-│                            │
-│  ┌──────────────────────┐  │
-│  │ Clojure Service      │  │
-│  │ (Port 8080)          │  │
-│  │ - Ring + Reitit      │  │
-│  │ - Swagger UI         │  │
-│  └──────────────────────┘  │
-│                            │
-│  ┌──────────────────────┐  │
-│  │ Python Runner Pod    │  │
-│  │ (persistent, single) │  │
-│  │ - Bencode protocol   │  │
-│  │ - Rule executor      │  │
-│  └──────────────────────┘  │
-│                            │
-│  ┌──────────────────────┐  │
-│  │ Models (schemas)     │  │
-│  │ - loan.schema.v1.0.0 │  │
-│  └──────────────────────┘  │
-└────────────────────────────┘
-```
-
-**Build and Run:**
-```bash
-# Build
-docker build -t validation-service:latest .
-
-# Run
-docker run -d --name validation-service -p 8080:8080 validation-service:latest
-```
-
-**Deployment method:**
-- Single Docker/Podman container
-- Supports Docker Compose for multi-service deployments
-- Health check endpoint: `/health`
-- Swagger UI available at `/swagger-ui`
-
-**Dependencies:**
-- Docker or Podman runtime
-- Access to coordination service (currently stubbed)
-- Optional: Volume mounts for custom schemas or configuration
-
-### Production Phase
-
-**Packaging:**
-
-The production service is packaged as a Docker image containing:
-- Java service (Spring Boot or similar)
-- Python 3.10+ runtime
-- Python runner code and dependencies
-- Validation rules
-
-**Dockerfile structure:**
-```dockerfile
-FROM maven:3.8-openjdk-17 AS java-build
-# Build Java service JAR
-
-FROM python:3.10-slim AS python-base
-# Install Python dependencies
-
-FROM openjdk:17-slim
-# Copy Java JAR
-# Copy Python runtime and dependencies
-# Copy validation rules
-EXPOSE 8080
-CMD ["java", "-jar", "validation-service.jar"]
-```
-
-**Container Orchestration:**
-- Kubernetes (recommended for enterprise)
-- Docker Swarm
-- Cloud-native services (ECS, Cloud Run, AKS)
-
-**Multi-instance deployment:**
-```
-        ┌──────────────┐
-        │ Load Balancer│
-        └──────┬───────┘
-               │
-  ┌────────────┼───────────┐
-  │            │           │
-┌─▼───┐     ┌──▼──┐     ┌──▼──┐
-│Java │     │Java │     │Java │
-│Svc  │     │Svc  │     │Svc  │
-│Inst │     │Inst │     │Inst │
-└─┬───┘     └──┬──┘     └──┬──┘
-  │            │            │
-  │ Spawn      │            │
-  │ Python     │            │
-  │ Runners    │            │
-  │            │            │
-┌─▼────────────▼────────────▼──┐
-│ Centralized Logging & Metrics│
-│ (ELK Stack, Prometheus, etc.)│
-└──────────────────────────────┘
-```
-
-**Horizontal scaling:**
-- Stateless JVM services (no shared state)
-- Load balancer distributes requests
-- Each container instance spawns its own Python runners
-- Shared logging and metrics collection
-- Auto-scaling based on CPU/memory or request metrics
-
-**Container resource requirements:**
-- CPU: 2-4 cores per container
-- Memory: 2-4 GB per container (Python runners are short-lived)
-- Disk: Minimal (rules in image, logs externalized)
-
-**Deployment strategies:**
-- Rolling updates: Deploy new version gradually
-- Blue-green: Switch traffic between old/new versions
-- Canary: Route small percentage to new version for testing
-
-### Configuration Management
-
-**Environment-specific configs:**
-- Development: Local coordination service, verbose logging
-- Staging: Staging coordination service, performance testing
-- Production: Production coordination service, monitoring enabled
-
-**Secrets management:**
-- Coordination service credentials
-- Logging service credentials
-- Stored in environment variables or secret manager (not in config files)
-
-## Migration Path: Clojure → Java
-
-**See also:** [PRODUCTIONIZATION.md](./docs/PRODUCTIONIZATION.md) - Item #8 for complete production migration strategy and checklist.
-
-### Compatibility Considerations
-
-**Python runner:**
-- Remains unchanged (same interface, same code)
-- Config file format unchanged
-- Rule interface unchanged
-
-**JVM service migration:**
-1. Reimplement Clojure logic in Java
-2. Choose communication protocol:
-   - Option A: Implement bencode in Java
-   - Option B: Switch to gRPC
-3. Migrate configuration format (likely no change)
-4. Port monitoring and logging
-
-**Testing strategy:**
-- Run both Clojure and Java services in parallel
-- Compare outputs for same inputs
-- Gradual cutover with canary deployment
-
-### Timeline
-
-**Phase 1 - POC (Clojure):**
-- Duration: 4-8 weeks
-- Goal: Validate architecture, performance, rule interface
-- Deliverable: Working prototype with 10-20 sample rules
-
-**Phase 2 - Production (Java):**
-- Duration: 8-12 weeks
-- Goal: Enterprise-ready service with full feature set
-- Deliverable: Production-deployed service with monitoring, CI/CD, documentation
-
-## Implementation Priorities
-
-### POC Phase (Implemented - February 2026)
-
-**Core Infrastructure:**
-✅ **Transport abstraction** - Babashka pods with pluggable ValidationRunnerClient protocol
-✅ **Single persistent pod** - Created at startup, eliminates per-request spawn overhead
-✅ **Entity helper abstraction** - LoanV1/V2 helpers decouple rules from data model
-✅ **Rule testing framework** - 15 comprehensive tests, all passing
-✅ **Rule versioning strategy** - Version numbers in filenames and config-driven selection
-✅ **Library/Web split** - Issue #1: Separation of reusable validation library from HTTP layer
-✅ **Two-tier configuration** - Issue #2: Infrastructure config separate from business logic config
-
-**API Endpoints:**
-✅ **Single entity validation** - `POST /api/v1/validate`
-✅ **Rule discovery** - `POST /api/v1/discover-rules`
-✅ **Batch inline** - `POST /api/v1/batch` with mixed entity type support
-✅ **Batch file** - `POST /api/v1/batch-file` with file://, http://, https:// URI support
-✅ **Swagger UI** - Interactive API documentation at `/swagger-ui`
-
-**Advanced Features:**
-✅ **Schema-based ID mapping** - `id_fields` parameter for flexible entity correlation
-✅ **Flexible output modes** - HTTP response or file output for batch operations
-✅ **Relative path support** - Container-ready with automatic path normalization
-✅ **Multi-stage Docker build** - Optimized image size, single persistent pod architecture
-
-**Validation & Testing:**
-✅ **Schema validation** - rule_001_v1 working with relative paths
-✅ **Business rules** - rule_002_v1 and additional loan validation rules
-✅ **Batch processing** - Tested with multiple entities and mixed types
-✅ **Container deployment** - Docker/Podman tested and working
-✅ **End-to-end tests** - Babashka test suite with 4 scenarios, all passing
-
-### Production Roadmap
-
-The POC validates architecture and performance. For production readiness requirements, enhancements, open questions, and implementation priorities, see:
-
-**→ [PRODUCTIONIZATION.md](./PRODUCTIONIZATION.md)**
-
-This document consolidates:
-- Critical production requirements (authentication, monitoring, multi-version support, etc.)
-- Decision framework based on POC learnings
-- Open questions to resolve
-- Future enhancements roadmap
-- Implementation checklist
-
-Key items deferred to production phase:
-1. **Entity helper multi-version support** - See [ENTITY-HELPER-VERSIONING.md](./ENTITY-HELPER-VERSIONING.md)
-2. **Field access logging** - Production-grade centralized logging (#1 in PRODUCTIONIZATION.md)
-3. **Configuration management** - Dynamic reload, validation, versioning (#3)
-4. **Advanced monitoring** - Distributed tracing, analytics (#6)
-5. **DataProvider abstraction** - Pluggable data sources (#4)
-6. **Batch optimization** - Process pooling, parallel processing (#5)
-
-The POC phase will inform which enhancements are critical vs. optional for production.
-
-## Appendices
-
-### Appendix A: Bencode Format Overview
-
-Bencode is a simple binary encoding format used by BitTorrent. It supports four data types:
-
-- **Integers**: `i<number>e` (e.g., `i42e` = 42)
-- **Strings**: `<length>:<string>` (e.g., `4:spam` = "spam")
-- **Lists**: `l<items>e` (e.g., `li1ei2ee` = [1, 2])
-- **Dictionaries**: `d<key><value>...e` (e.g., `d3:bar4:spam3:fooi42ee` = {"bar": "spam", "foo": 42})
-
-Libraries available for Java and Python make encoding/decoding straightforward.
-
-### Appendix B: Sample Rule Implementation
-
-See section "Rule Class Interface" for complete example of `Rule001`.
-
-### Appendix C: Glossary
-
-- **Entity**: A data object being validated (deal, facility, loan)
-- **Rule**: Executable code that checks a specific validation condition
-- **Inline mode**: Real-time validation during business processes
-- **Batch mode**: Scheduled validation of multiple entities
-- **Pod**: Babashka pods protocol for language interoperability
-- **Bencode**: Binary encoding format used by pods protocol
-- **Coordination service**: External service providing additional data
-- **Required data**: Additional data beyond the entity needed by a rule
-- **Vocabulary term**: Standardized name for required data (e.g., "parent", "all_siblings")
-- **Hierarchical rules**: Parent-child rule relationships where children only run if parent passes
-
-### Appendix D: POC Project Structure
-
-The following directory structure is recommended for the POC phase:
-
-```
-validation-service/
-├── docs/                          # Design documentation
-│   ├── DESIGN.md                  # Functional design (business-facing)
-│   ├── TECHNICAL-DESIGN.md        # Technical design
-│   ├── rule_field_dependencies.json  # Generated: field dependencies per rule
-│   └── architecture/              # Diagrams, ADRs (Architecture Decision Records)
-│
-├── jvm-service/                   # Clojure orchestration service
-│   ├── src/                       # Clojure source code
-│   │   └── validation_service/
-│   │       ├── core.clj
-│   │       ├── library/           # Library layer (Issue #1)
-│   │       │   ├── service.clj    # ValidationService protocol + implementation
-│   │       │   ├── workflows.clj  # Validation orchestration workflows
-│   │       │   └── runner/        # ValidationRunnerClient protocol and impls
-│   │       └── api/               # Web layer (Issue #1)
-│   │           ├── handlers.clj   # HTTP request handlers
-│   │           ├── routes.clj     # Reitit route definitions
-│   │           └── schemas.clj    # OpenAPI/Swagger schemas
-│   ├── test/                      # Clojure tests
-│   ├── resources/                 # Configuration files
-│   │   ├── library-config.edn     # Library layer config (Issue #1)
-│   │   └── web-config.edn         # Web layer config (Issue #1)
-│   ├── deps.edn                   # Dependency management
-│   └── README.md                  # JVM service documentation
-│
-├── python-runner/                 # Python rule runner
-│   ├── runner.py                  # Main entry point
-│   ├── local-config.yaml          # Infrastructure config (Tier 1, Issue #2)
-│   ├── core/                      # Core validation modules
-│   │   ├── __init__.py
-│   │   ├── validation_engine.py   # Core validation business logic
-│   │   ├── rule_loader.py         # Dynamic rule discovery and loading
-│   │   ├── rule_executor.py       # Rule execution engine
-│   │   ├── config_loader.py       # Two-tier config loading (Issue #2)
-│   │   └── rule_fetcher.py        # Remote rule fetching with caching (Issue #2)
-│   ├── entity_helpers/            # Entity helper classes with versioning
-│   │   ├── __init__.py            # create_entity_helper factory
-│   │   ├── version_registry.py    # Schema URL → helper class mapping
-│   │   ├── loan_v1.py            # Loan v1 helper (schema v1.0.0)
-│   │   ├── loan_v2.py            # Loan v2 helper (schema v2.0.0)
-│   │   ├── facility_v1.py        # Facility helper
-│   │   └── deal_v1.py            # Deal helper
-│   ├── transport/                 # Transport abstraction layer
-│   │   ├── __init__.py
-│   │   ├── base.py                # Abstract TransportHandler interface
-│   │   ├── pods_transport.py      # Babashka pods implementation
-│   │   ├── bencode_reader.py      # Bencode protocol utilities
-│   │   └── case_conversion.py     # snake_case ↔ kebab-case conversion
-│   ├── tests/                     # Comprehensive test suite
-│   │   ├── test_config_loader.py
-│   │   ├── test_rule_fetcher.py
-│   │   ├── test_rule_loader.py
-│   │   ├── test_validation_engine.py
-│   │   └── ...
-│   ├── requirements.txt           # Python dependencies
-│   └── README.md                  # Python runner documentation
-│
-├── business-config.yaml           # Business logic config (Tier 2, Issue #2)
-├── rules/                         # Validation rules (top-level, can be separate repo)
-│   ├── base.py                    # Base class for all rules
-│   ├── loan/
-│   │   ├── rule_001_v1.py
-│   │   ├── rule_002_v1.py
-│   │   ├── rule_003_v1.py
-│   │   └── rule_004_v1.py
-│   ├── facility/
-│   │   ├── rule_003_v1.py
-│   │   └── rule_017_v1.py
-│   └── deal/
-│       └── rule_010_v1.py
-│
-├── models/                        # JSON Schema definitions
-│   ├── loan.schema.v1.0.0.json    # Loan entity schema v1
-│   ├── loan.schema.v2.0.0.json    # Loan entity schema v2
-│   ├── facility.schema.json       # Facility entity schema
-│   └── deal.schema.json           # Deal entity schema
-│   # NOTE: Schemas are versioned and stored alongside code.
-│   # Entity data contains a $schema field that determines which version applies.
-│
-├── config/                        # Environment-specific configurations
-│   ├── dev.yaml                   # Development environment
-│   ├── staging.yaml               # Staging environment
-│   └── poc.yaml                   # POC demo environment
-│
-├── scripts/                       # Development and deployment utilities
-│   ├── start-services.sh          # Start both JVM and Python services
-│   ├── run-tests.sh               # Run all tests (JVM + Python)
-│   ├── load-sample-data.sh        # Load demo data for testing
-│   ├── validate-config.sh         # Validate configuration files
-│   └── catalog_rule_dependencies.sh  # Analyze which fields each rule accesses
-│
-├── sample-data/                   # Test and demo data
-│   ├── deals.json                 # Sample deals for testing
-│   ├── facilities.json            # Sample facilities
-│   ├── loans.json                 # Sample loans
-│   ├── single-examples/           # Individual entity examples
-│   │   └── loan1.json
-│   └── batch_examples/            # Batch file examples
-│       ├── batch_100_loans.json
-│       └── batch_1000_loans.json
-│
-├── logs/                          # Runtime logs
-│   # Field access tracking logs from entity helpers
-│   # Service logs during development/testing
-│   # NOTE: .gitignore should exclude log files
-│
-├── docker/                        # Container definitions (optional)
-│   ├── Dockerfile.jvm             # JVM service container
-│   ├── Dockerfile.python          # Python runner container
-│   └── docker-compose.yml         # Multi-container orchestration
-│
-└── README.md                      # Project overview and getting started guide
-```
-
-**Structure Rationale:**
-
-**Separation of Concerns:**
-- `jvm-service/` and `python-runner/` are independent, self-contained projects
-- Each can be built, tested, and run independently
-- Clear ownership boundaries between orchestration and rule execution
-
-**Configuration Management:**
-- **Two-tier architecture** (Issue #2): Infrastructure config (`local-config.yaml`) separate from business logic (`business-config.yaml`)
-- **Library/Web split** (Issue #1): `library-config.edn` and `web-config.edn` for clear separation of concerns
-- Python runner's `business-config.yaml` defines rule sets with schema-based routing
-- JVM service configuration in `resources/` directory (library and web configs)
-- Rules can be hosted remotely with URI-based fetching and caching
-
-**Developer Productivity:**
-- `scripts/` provides common tasks (start services, run tests)
-- `sample-data/` enables quick testing and demos
-- `docker/` (optional) ensures consistent environments
-
-**Documentation:**
-- `docs/` keeps design documents organized
-- Each service has its own README for specific setup/usage
-- Root README provides overall project context
-
-**Testing:**
-- Tests colocated with code (`jvm-service/test/`, rule test files)
-- Sample data available for integration testing
-- Test helper framework in `python-runner/rule_test_helper.py`
-
-**Migration Path:**
-- Structure supports easy swap of `jvm-service/` for Java implementation
-- Python runner remains unchanged during JVM migration
-- Clear boundaries enable parallel development
-
-**POC Focus:**
-- Simple, flat structure suitable for small team
-- Easy to navigate and understand
-- No over-engineering (can refactor for production if needed)
-
-**Getting Started Flow:**
-
-For a new developer joining the POC:
-1. Read `README.md` (project overview)
-2. Review `docs/DESIGN.md` and `docs/TECHNICAL-DESIGN.md`
-3. Run `scripts/start-services.sh`
-4. Test with `sample-data/loans.json`
-5. Write a new rule in `python-runner/rules/loan/`
-6. Test with `python-runner/rule_test_helper.py`
-
-This structure balances simplicity for POC with enough organization to support growth into production.
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2026-02-12
-**Authors:** Technical Architecture Team
-**Status:** ✅ Phase 1 POC Implementation Complete
+## 12. File Path Handling
 
-**Implementation Summary:**
-- All core endpoints implemented and tested
-- Batch validation with mixed types and flexible output
-- Container-ready with multi-stage Docker build
-- Single persistent pod architecture for optimal performance
-- Comprehensive test coverage (Python + integration tests)
-- Production-ready for small-to-medium scale deployments
+### The Problem
+
+Python's `urllib.request.urlopen()` cannot resolve relative `file://` URIs. A path like `file://../logic/models/schema.json` gets interpreted as `/logic/models/schema.json` from the filesystem root.
+
+### The Solution
+
+The JVM service normalizes all relative `file://` URIs to absolute paths before passing them to the Python runner. Implemented in `utils/file_io.clj`:
+
+```
+file://../logic/models/schema.json
+  → file:///Users/.../validation-service/logic/models/schema.json
+
+file:./test/data.json
+  → file:///Users/.../jvm-service/test/data.json
+
+https://example.com/data.json
+  → https://example.com/data.json  (unchanged)
+```
+
+This normalization happens at the start of each validation workflow and is transparent to the rest of the system. It ensures the same relative paths work in both local development and Docker containers.
+
+### Container Directory Structure
+
+```
+/app/
+├── logic/               # Business-owned assets
+│   ├── business-config.yaml
+│   ├── models/
+│   │   └── loan.schema.v1.0.0.json
+│   └── rules/
+│       └── loan/
+├── python-runner/
+│   └── local-config.yaml
+└── jvm-service/         # WORKDIR
+    ├── validation-service.jar
+    └── test/test-data/
+```
+
+---
+
+## 13. Data Model
+
+### JSON Schemas
+
+Schema files follow the naming convention `{entity_type}.schema.v{version}.json` and live in `logic/models/`. Each schema declares a canonical `$id` URL:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bank.example.com/schemas/loan/v1.0.0",
+  "title": "Loan Schema v1.0.0",
+  "version": "1.0.0",
+  ...
+}
+```
+
+Entity data references its schema via the `$schema` field. This drives both schema validation (rule_001) and version routing (entity helper selection).
+
+### Schema Versioning Strategy
+
+- **Major versions** (v1 → v2): Breaking changes. Require new entity helper class. Explicit mapping in config.
+- **Minor versions** (v1.0 → v1.1): Backward-compatible additions. Can fall back to major version's helper (configurable).
+- **Version compatibility** is controlled in `logic/business-config.yaml` via `version_compatibility.allow_minor_version_fallback` and `strict_major_version`.
+
+See [HOW-VERSIONING-WORKS.md](HOW-VERSIONING-WORKS.md) for a detailed versioning guide.
+
+---
+
+## 14. Testing
+
+### Python Tests
+
+| Test | Coverage |
+|------|----------|
+| `test_rule_executor.py` | Hierarchical execution, parent-child dependencies, error handling |
+| `test_entity_helper_integration.py` | Helper injection, field access tracking, version routing |
+| `test_rule_discovery.py` | Rule metadata generation, field dependency reporting |
+| `test_simple_bencode.py` | Bencode message encoding/decoding |
+| `test_describe.py` | Pod describe protocol response |
+| `test_pod.clj` | End-to-end Clojure → Python pod communication |
+
+### Test Data
+
+- `tests/test_data/loan_v1_valid.json` — Valid loan conforming to v1.0.0 schema
+- `tests/test_data/loan_v2_valid.json` — Valid loan conforming to v2.0.0 schema
+- `jvm-service/test/test-data/loans.json` — Batch test data
+- `jvm-service/test/requests/batch-*.json` — Example batch requests
+
+### Running Tests
+
+```bash
+# Python unit tests
+cd python-runner && python -m pytest tests/
+
+# Clojure integration tests
+cd jvm-service && clojure -M:test
+
+# End-to-end pod test
+cd jvm-service && bb test/babashka/run-tests.clj
+```
+
+---
+
+## 15. Deployment
+
+### Docker
+
+```bash
+docker build -t validation-service .
+docker run -d --name validation-service -p 8080:8080 validation-service
+curl http://localhost:8080/health
+```
+
+The Dockerfile packages both the JVM service and Python runner in a single image. The JVM service is the entrypoint; it spawns the Python runner as a child process.
+
+### Local Development
+
+```bash
+# Start the JVM service (spawns Python runner automatically)
+cd jvm-service && clojure -M -m validation-service.core
+```
+
+The default `library-config.edn` uses relative paths (`../python-runner/runner.py`, `../python-runner/local-config.yaml`) that work from the `jvm-service/` directory.
+
+---
+
+## 16. Key Design Patterns
+
+### Transport Abstraction
+
+Both JVM and Python abstract the communication protocol behind interfaces. Business logic has zero dependencies on specific transports. This enables:
+- POC with babashka pods
+- Production migration to gRPC without changing validation logic
+- A/B testing of different transports
+- Independent testing with mock transports
+
+### Data Abstraction
+
+Entity helpers isolate validation rules from the physical data model:
+- Rules use stable logical properties (`loan.principal`, `loan.maturity`)
+- Schema evolution handled by versioned helper classes
+- Model restructuring requires updating only the helper, not the rules
+
+### Config-Driven Rule Management
+
+Rule sets are defined in YAML configuration, not code:
+- Add/remove rules by editing config
+- Reorder rule hierarchy by rearranging config
+- Version-specific rules via schema URL keys
+- Same rule can appear in multiple rule sets
+
+### Convention Over Configuration
+
+- Rule class is always named `Rule`
+- Rule ID is derived from filename
+- Entity type directories mirror the data model
+- Schema file naming follows `{type}.schema.v{version}.json`
+
+### Business Logic Indirection
+
+The `logic/` directory is a layer of indirection that physically separates business-owned assets from service infrastructure. The service discovers rules, schemas, and configuration through `business_config_uri` in `local-config.yaml` — it never hardcodes paths into `logic/`. This enables:
+- Business logic in a separate repository
+- Independent deployment of rules without service redeployment
+- Remote hosting of rules on a CDN or artifact server
+- Clean ownership boundaries between service and rules teams
+
+### Separation of Ownership
+
+| Concern | Owner | Configuration |
+|---------|-------|---------------|
+| Service infrastructure | Service team | `local-config.yaml`, `library-config.edn`, `web-config.edn` |
+| Rule definitions | Rules team | `logic/business-config.yaml` |
+| Rule implementations | Rules team | `logic/rules/{entity_type}/*.py` |
+| Entity helpers | Data model team | `logic/entity_helpers/*.py` |
+| Schema definitions | Data model team | `logic/models/*.json` |
+
+---
+
+## 17. Production Migration Summary
+
+The architecture is designed for straightforward migration to production:
+
+| POC Component | Production Target | Migration Effort |
+|--------------|-------------------|-----------------|
+| Clojure web layer | Spring Boot controllers | Web layer rewrite |
+| Clojure library layer | Java classes/interfaces | Protocol → interface, record → class |
+| Babashka pods | gRPC (or retained bencode) | Transport handler swap |
+| Python runner | Unchanged | None |
+| Rules | Unchanged | None |
+| Entity helpers | Unchanged | None |
+| Two-tier config | Spring Cloud Config + CDN | URI-based (already supported) |
+
+**Key enablers:**
+- Library/web split means the two layers can be migrated independently
+- Transport abstraction means protocol swap requires no business logic changes
+- Python runner is entirely unchanged during JVM migration
+- Two-tier config already supports remote URIs for production deployment
+
+See [PRODUCTIONIZATION.md](PRODUCTIONIZATION.md) for the detailed migration roadmap, timeline, and decision framework.
+
+---
+
+## Appendix A: Glossary
+
+| Term | Definition |
+|------|-----------|
+| **Entity** | A business data object (deal, facility, or loan) |
+| **Entity helper** | Python class providing stable logical properties over raw entity data |
+| **Rule set** | A named collection of rules in config (e.g., "quick", "thorough") |
+| **Vocabulary term** | A standardized name for external data a rule needs (e.g., "parent") |
+| **Coordination service** | External service that fetches related data for validation rules |
+| **Pod** | A babashka pods process — the Python runner as seen by the JVM |
+| **Transport handler** | Abstract interface for JVM↔Python communication |
+| **Schema URL** | The `$schema` field in entity data, used for version routing |
+| **Two-tier config** | Architecture separating infrastructure config from business config |
+| **Logic folder** | Directory (`logic/`) consolidating all business-owned assets — a layer of indirection enabling independent deployment |
+
+---
+
+**Document Version:** 1.0
+**Date:** 2026-02-13
+**Status:** Current — reflects completed POC

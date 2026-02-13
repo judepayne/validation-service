@@ -127,7 +127,7 @@ def test_resolve_rule_uri_without_base():
         loader = ConfigLoader(config_path)
         uri = loader.resolve_rule_uri('loan', 'rule_001_v1')
 
-        assert uri == '../rules/loan/rule_001_v1.py'
+        assert uri == '../logic/rules/loan/rule_001_v1.py'
         print("✓ Rule URI resolution without base test passed")
     finally:
         Path(config_path).unlink()

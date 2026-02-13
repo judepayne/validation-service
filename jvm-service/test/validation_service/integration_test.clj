@@ -16,7 +16,7 @@
 (defn test-validate-endpoint []
   (println "\n=== Testing POST /api/v1/validate ===")
   (let [request-body {:entity_type "loan"
-                     :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+                     :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
                                   :id "LOAN-TEST-001"
                                   :loan_number "LN-001"
                                   :facility_id "FAC-100"
@@ -40,7 +40,7 @@
 (defn test-discover-rules-endpoint []
   (println "\n=== Testing POST /api/v1/discover-rules ===")
   (let [request-body {:entity_type "loan"
-                     :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+                     :entity_data {:$schema "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
                                   :id "TEST"}
                      :ruleset_name "quick"}
         response (http/post "http://localhost:8080/api/v1/discover-rules"

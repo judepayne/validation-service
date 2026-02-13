@@ -32,12 +32,6 @@ class RuleExecutor:
         else:
             self.entity_helper = None
 
-        # Simple cache for entity and required data
-        self.cache = {
-            "entity": entity_data,
-            "required": required_data
-        }
-
     def execute_hierarchical(self, rule_configs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Execute rules respecting hierarchical dependencies.

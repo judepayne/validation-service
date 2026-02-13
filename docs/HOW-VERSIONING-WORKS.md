@@ -1,76 +1,138 @@
 # Entity Helper Versioning
 
-Entity helpers are versioned by schema. When entity data declares a `$schema` URL, the runner automatically loads the correct helper class. Multiple schema versions can be active simultaneously — useful during migration periods when some data is still on v1 while new data arrives as v2.
+When entity data declares a `$schema` URL, the validation service automatically routes it to the correct entity helper class. Multiple schema versions can be active simultaneously, which is essential during migration periods when upstream systems send a mix of v1 and v2 data.
 
-## How it works
+## The Problem
 
-Each piece of entity data includes a `$schema` field:
+Validation rules access entity data through logical properties like `loan.principal` and `loan.reference`. But the physical JSON structure changes between schema versions:
+
+| Logical Property | v1.0.0 Physical Path | v2.0.0 Physical Path |
+|-----------------|---------------------|---------------------|
+| `reference` | `loan_number` | `reference_number` |
+| `facility` | `facility_id` | `facility_ref` |
+| `rate` | `financial.interest_rate` | `financial.rate` |
+| `category` | *(not present)* | `loan_category` |
+
+Without an abstraction layer, every rule would break on every field rename. Entity helpers absorb these changes so rules don't have to.
+
+## How It Works
+
+**1. Entity data declares its schema version:**
 
 ```json
 {
   "$schema": "https://bank.example.com/schemas/loan/v2.0.0",
-  "id": "LOAN-20001",
   "reference_number": "LN-2024-00002",
-  ...
+  "financial": { "rate": 0.05, ... }
 }
 ```
 
-`config.yaml` maps schema URLs to helper classes:
+**2. Business config maps schema URLs to helper classes:**
 
 ```yaml
+# logic/business-config.yaml
+
 schema_to_helper_mapping:
   "https://bank.example.com/schemas/loan/v1.0.0": "loan_v1.LoanV1"
   "https://bank.example.com/schemas/loan/v2.0.0": "loan_v2.LoanV2"
 
 default_helpers:
-  loan: "loan_v1.LoanV1"   # used when $schema is absent
+  loan: "loan_v1.LoanV1"     # fallback when $schema is absent
 
 version_compatibility:
-  allow_minor_version_fallback: true   # v1.1.0 falls back to v1.0.0 helper
-  strict_major_version: true           # unknown major version raises an error
+  allow_minor_version_fallback: true    # v1.1.0 -> v1.0.0 helper
+  strict_major_version: true            # unknown major version -> error
 ```
 
-At runtime, `VersionRegistry` reads these mappings and `create_entity_helper()` returns the right class. Rules always work through the stable logical interface (`loan.reference`, `loan.rate`, etc.) regardless of which helper version is underneath.
+**3. At runtime, the registry resolves the correct helper:**
 
-## File layout
+```python
+from entity_helpers import create_entity_helper
 
-```
-models/
-├── loan.schema.v1.0.0.json    # v1 schema
-└── loan.schema.v2.0.0.json    # v2 schema (breaking changes)
+# Factory uses VersionRegistry to pick the right class
+helper = create_entity_helper("loan", entity_data)
 
-python-runner/entity_helpers/
-├── loan_v1.py                 # LoanV1 for v1.x.x data
-├── loan_v2.py                 # LoanV2 for v2.x.x data (renamed fields)
-└── version_registry.py        # VersionRegistry + get_registry() singleton
+# Rules use stable logical properties regardless of version
+helper.reference   # LoanV1 reads loan_number, LoanV2 reads reference_number
+helper.rate        # LoanV1 reads financial.interest_rate, LoanV2 reads financial.rate
 ```
 
-Helper classes are per major version. Minor versions (`v1.0.0`, `v1.1.0`) share the same helper since minor changes are backward-compatible additions.
+**4. Rules work unchanged across versions:**
 
-## Adding a new schema version
+```python
+# This rule validates both v1 and v2 loans without modification
+if self.entity.principal <= 0:
+    return ("FAIL", "Principal must be positive")
+```
 
-1. Create `models/loan.schema.v3.0.0.json` with `"$id"` and `"version"` updated.
-2. Create `entity_helpers/loan_v3.py` with field mappings for the new schema.
-3. Add the mapping to `config.yaml`:
+## Version Resolution Order
+
+When the registry receives entity data, it resolves the helper class in this order:
+
+1. **Exact match** — `$schema` URL matches an entry in `schema_to_helper_mapping`
+2. **Minor version fallback** — `v1.2.0` falls back to `v1.0.0` mapping (if `allow_minor_version_fallback: true`)
+3. **Default helper** — entity type matches an entry in `default_helpers` (when `$schema` is absent)
+4. **Error** — `ValueError` if nothing matches (strict major version check rejects unknown majors)
+
+## File Layout
+
+```
+logic/
+├── models/
+│   ├── loan.schema.v1.0.0.json       # v1 JSON Schema
+│   └── loan.schema.v2.0.0.json       # v2 JSON Schema (breaking changes)
+│
+├── entity_helpers/
+│   ├── __init__.py                    # create_entity_helper() factory
+│   ├── version_registry.py           # VersionRegistry + get_registry() singleton
+│   ├── loan_v1.py                    # LoanV1 — maps logical props to v1 fields
+│   └── loan_v2.py                    # LoanV2 — maps logical props to v2 fields
+│
+└── business-config.yaml              # schema_to_helper_mapping lives here
+```
+
+Helper classes are per **major** version. Minor versions (`v1.0.0`, `v1.1.0`) share the same helper since minor changes are backward-compatible additions.
+
+## Adding a New Schema Version
+
+1. Create the schema file: `logic/models/loan.schema.v3.0.0.json` (set `$id` and `version`)
+2. Create the helper: `logic/entity_helpers/loan_v3.py` with field mappings for the new schema
+3. Add the mapping to `logic/business-config.yaml`:
    ```yaml
-   "https://bank.example.com/schemas/loan/v3.0.0": "loan_v3.LoanV3"
+   schema_to_helper_mapping:
+     "https://bank.example.com/schemas/loan/v3.0.0": "loan_v3.LoanV3"
    ```
 
-No other code changes needed. The registry picks up the new mapping on the next process start.
+No rule changes needed. No code changes outside `logic/`. The registry picks up the new mapping on the next process start.
 
-## Version resolution order
+## Immutability
 
-1. Exact `$schema` URL match in `schema_to_helper_mapping`
-2. Minor version fallback: `v1.2.0` → finds `v1.0.0` mapping (if `allow_minor_version_fallback: true`)
-3. `default_helpers` by entity type (when `$schema` is absent)
-4. `ValueError` if nothing matches
+Helper files are **immutable versioned artifacts**. `loan_v1.py` is never edited once published — it maps logical properties to v1.0.0 physical fields, and that mapping is frozen. When the schema evolves to v3, a new `loan_v3.py` is created. The business config is the only file that changes (to add the new mapping entry). See the immutability model in [TECHNICAL-DESIGN.md](TECHNICAL-DESIGN.md) Section 3 for details.
 
-## Schema file naming
+## Schema File Naming
 
-Schema files follow: `{entity_type}.schema.v{version}.json`
+Schema files follow the convention `{entity_type}.schema.v{version}.json`. Each schema declares a canonical `$id` URL:
 
-`rule_001_v1` (JSON schema validation) extracts the version from `$schema` and loads the corresponding file automatically.
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bank.example.com/schemas/loan/v1.0.0",
+  "title": "Loan Schema v1.0.0",
+  "version": "1.0.0"
+}
+```
 
-## Versioned helper classes
+When entity data references a schema via a `file://` or `https://` URI ending in `.json`, the version registry fetches the schema and extracts the canonical `$id` for matching. This means the same mapping works regardless of whether the schema is served locally or from a remote URL.
 
-Each major schema version has its own dedicated helper class (`LoanV1`, `LoanV2`, etc.). All code uses explicit version references - there is no unversioned `Loan` class. This makes version dependencies clear and prevents accidental mixing of incompatible versions.
+## Field Access Tracking
+
+Entity helpers optionally record which properties each rule accesses during execution:
+
+```python
+helper = create_entity_helper("loan", entity_data, track_access=True)
+# ... rule executes, accessing helper.principal and helper.balance ...
+dependencies = helper.get_accesses()
+# [("principal", "financial.principal_amount"), ("balance", "financial.outstanding_balance")]
+```
+
+This powers the `discover-rules` API endpoint for impact analysis and documentation generation.

@@ -19,10 +19,17 @@ import os
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
-# Add parent directory to Python path for rules module imports
-parent_dir = os.path.dirname(script_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Resolve logic directory before importing anything that needs it.
+# Supports both local paths (development) and remote URLs (production).
+config_path = sys.argv[1] if len(sys.argv) > 1 else "./local-config.yaml"
+
+from core.logic_fetcher import LogicPackageFetcher
+
+fetcher = LogicPackageFetcher()
+logic_dir = fetcher.resolve_logic_dir(config_path)
+
+if logic_dir and logic_dir not in sys.path:
+    sys.path.insert(0, logic_dir)
 
 from transport.pods_transport import PodsTransportHandler
 from core.validation_engine import ValidationEngine
@@ -30,7 +37,6 @@ from core.validation_engine import ValidationEngine
 
 def main():
     """Main entry point with pluggable transport"""
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "./local-config.yaml"
 
     # Initialize components
     engine = ValidationEngine(config_path)

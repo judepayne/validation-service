@@ -7,7 +7,7 @@
 (println "\nTrying get-required-data...")
 (def result (pods/invoke "pod.validation-runner" 'get-required-data
                          {:entity_type "loan"
-                          :schema_url "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+                          :schema_url "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
                           :ruleset_name "quick"}))
 
 (println "✓ Result:" result)

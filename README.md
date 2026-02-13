@@ -79,7 +79,7 @@ The validation service uses a **two-tier configuration architecture** to separat
 
 ### Tier 2: Business Configuration
 
-**Business Config** (`business-config.yaml`)
+**Business Config** (`logic/business-config.yaml`)
 - Business logic config owned by rules team
 - Defines rule sets (quick/thorough) and their rule assignments
 - Schema version to entity helper mappings
@@ -91,10 +91,10 @@ The validation service uses a **two-tier configuration architecture** to separat
 For local development, the default configuration uses local file paths:
 ```yaml
 # python-runner/local-config.yaml
-business_config_uri: "../business-config.yaml"
+business_config_uri: "../logic/business-config.yaml"
 
-# business-config.yaml
-# No rules_base_uri - rules loaded from ./rules/ directory
+# logic/business-config.yaml
+# No rules_base_uri - rules loaded from logic/rules/ directory
 ```
 
 ### Production Setup
@@ -104,7 +104,7 @@ For production, point to remote configurations:
 # python-runner/local-config.yaml
 business_config_uri: "https://rules-repo.example.com/prod/business-config.yaml"
 
-# business-config.yaml (in rules repository)
+# logic/business-config.yaml (in rules repository)
 rules_base_uri: "https://rules-repo.example.com/prod/rules"
 ```
 
@@ -116,11 +116,11 @@ rules_base_uri: "https://rules-repo.example.com/prod/rules"
 
 # Schemas
 
-schemas are JSON schema and live in the `models` folder.
+schemas are JSON schema and live in the `logic/models` folder.
 
 # Writing a rule
 
-Rules live in `rules/<entity-sub-folder>` at the project root (e.g., `rules/loan/`, `rules/facility/`, `rules/deal/`) and must inherit from the base class. Each rule has the following interface:
+Rules live in `logic/rules/<entity-sub-folder>` (e.g., `logic/rules/loan/`, `logic/rules/facility/`, `logic/rules/deal/`) and must inherit from the base class. Each rule has the following interface:
 
 `get_id` -> return the id of a rule (its filename minuse the .py extension)
 `validates` -> return the name of the data entity type that the rule validates.

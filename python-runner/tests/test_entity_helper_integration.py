@@ -3,6 +3,7 @@
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logic"))
 
 from core.rule_executor import RuleExecutor
 from entity_helpers import LoanV1
@@ -43,7 +44,7 @@ class MockLoanRule:
 print("Test 1: Entity helper creation")
 rules = [MockLoanRule()]
 entity_data = {
-    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-TEST-001",
     "financial": {
         "principal_amount": 100000,

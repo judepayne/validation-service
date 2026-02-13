@@ -25,6 +25,7 @@ This document provides a clear separation of responsibilities between the Python
 - ✅ **Transport layer** - Pods/gRPC communication interface (abstracted)
 - ✅ **Hierarchical execution** - Manages parent-child rule dependencies
 - ✅ **Caching** - In-memory caching of entity and required data during validation
+- ✅ **Remote logic loading** - Fetches entire `logic/` package from remote URL when `business_config_uri` is an HTTP(S) URL, with local filesystem caching
 
 ### Key Characteristics
 
@@ -200,8 +201,8 @@ Python → JVM: {"rule_002_v1": [["principal", "financial.principal_amount"], ..
 
 ### Working on Validation Logic?
 → **Edit Python code** in `python-runner/`
-- Add new rules in `rules/{entity_type}/`
-- Modify entity helpers in `entity_helpers/`
+- Add new rules in `logic/rules/{entity_type}/`
+- Modify entity helpers in `logic/entity_helpers/`
 - Update rule configuration in `config.yaml`
 
 ### Working on API or Orchestration?

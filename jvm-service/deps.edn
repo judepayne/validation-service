@@ -33,8 +33,7 @@
   ;; HTTP client for coordination service
   clj-http/clj-http {:mvn/version "3.13.1"}
 
-  ;; Utilities
-  org.clojure/core.async {:mvn/version "1.8.741"}}
+}
 
  :aliases
  {:dev

@@ -1,6 +1,6 @@
 [
   {
-    "$schema": "file://../../models/loan.schema.v1.0.0.json",
+    "$schema": "file://../../logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-12345",
     "loan_number": "LN-001",
     "facility_id": "FAC-100",
@@ -17,7 +17,7 @@
     "status": "active"
   },
   {
-    "$schema": "file://../../models/loan.schema.v1.0.0.json",
+    "$schema": "file://../../logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-67890",
     "loan_number": "LN-002",
     "facility_id": "FAC-100",

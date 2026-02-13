@@ -1,5 +1,5 @@
 {
-  "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v2.0.0.json",
+  "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v2.0.0.json",
   "id": "LOAN-20001",
   "reference_number": "LN-2024-00002",
   "facility_ref": "FAC-200",

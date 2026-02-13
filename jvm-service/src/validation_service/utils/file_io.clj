@@ -116,8 +116,8 @@
 
   Examples:
     - file:///absolute/path/file.json -> file:///absolute/path/file.json (unchanged)
-    - file://../models/schema.json -> file:///Users/jude/Dropbox/Projects/validation-service/models/schema.json
-    - file://../../models/schema.json -> file:///Users/jude/Dropbox/Projects/validation-service/models/schema.json
+    - file://../logic/models/schema.json -> file:///Users/jude/Dropbox/Projects/validation-service/logic/models/schema.json
+    - file://../../logic/models/schema.json -> file:///Users/jude/Dropbox/Projects/validation-service/logic/models/schema.json
     - file:./test/data.json -> file:///Users/jude/Dropbox/Projects/validation-service/jvm-service/test/data.json
     - http://example.com/data.json -> http://example.com/data.json (unchanged)"
   [uri]

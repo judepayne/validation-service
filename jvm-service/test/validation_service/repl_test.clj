@@ -26,7 +26,7 @@
 
 (def valid-loan
   "Example valid loan data"
-  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
    "id" "LOAN-12345"
    "loan_number" "LN-001"
    "facility_id" "FAC-100"
@@ -40,7 +40,7 @@
 
 (def invalid-loan-negative-principal
   "Example loan with negative principal (should fail validation)"
-  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
    "id" "LOAN-99999"
    "loan_number" "LN-BAD"
    "facility_id" "FAC-999"
@@ -54,7 +54,7 @@
 
 (def invalid-loan-bad-dates
   "Example loan with maturity before origination (should fail validation)"
-  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
    "id" "LOAN-88888"
    "loan_number" "LN-DATES"
    "facility_id" "FAC-888"
@@ -68,7 +68,7 @@
 
 (def paid-off-loan-with-balance
   "Example paid-off loan that still has balance (should fail rule_004_v1)"
-  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json"
+  {"$schema" "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json"
    "id" "LOAN-77777"
    "loan_number" "LN-PAIDOFF"
    "facility_id" "FAC-777"

@@ -86,7 +86,7 @@ curl -X POST http://localhost:8080/api/v1/validate \
   -d '{
     "entity_type": "loan",
     "entity_data": {
-      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
       "id": "LOAN-12345",
       "loan_number": "LN-001",
       "facility_id": "FAC-100",
@@ -116,7 +116,7 @@ curl -X POST http://localhost:8080/api/v1/discover-rules \
   -d '{
     "entity_type": "loan",
     "entity_data": {
-      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+      "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
       "id": "TEST"
     },
     "ruleset_name": "quick"

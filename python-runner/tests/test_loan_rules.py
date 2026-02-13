@@ -3,6 +3,8 @@
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add logic/ directory to sys.path for entity_helpers and rules imports
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logic"))
 
 import json
 from core.validation_engine import ValidationEngine
@@ -20,7 +22,7 @@ print("Test Case 1: Valid Loan (should PASS all rules)")
 print("="*70)
 
 valid_loan = {
-    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-12345",
     "loan_number": "LN-2024-00123",
     "facility_id": "FAC-789",
@@ -55,7 +57,7 @@ print("Test Case 2: Missing Required Field (should FAIL rule_001_v1)")
 print("="*70)
 
 invalid_loan_schema = {
-    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-99999",
     # Missing loan_number, facility_id (required fields)
     "financial": {
@@ -83,7 +85,7 @@ print("Test Case 3: Negative Principal (should FAIL rule_002_v1)")
 print("="*70)
 
 invalid_loan_business = {
-    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-88888",
     "loan_number": "LN-2024-BAD",
     "facility_id": "FAC-999",
@@ -112,7 +114,7 @@ print("Test Case 4: Maturity Before Origination (should FAIL rule_002_v1)")
 print("="*70)
 
 invalid_dates_loan = {
-    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-77777",
     "loan_number": "LN-2024-DATE",
     "facility_id": "FAC-888",
@@ -141,7 +143,7 @@ print("Test Case 5: Missing interest_rate (should ERROR in rule_002_v1)")
 print("="*70)
 
 missing_rate_loan = {
-    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json",
+    "$schema": "file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json",
     "id": "LOAN-66666",
     "loan_number": "LN-2024-NORAT",
     "facility_id": "FAC-777",

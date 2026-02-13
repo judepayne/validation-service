@@ -104,6 +104,27 @@ class ConfigLoader:
         """Get local configuration (tier 1)."""
         return self.local_config
 
+    def get_business_config_uri(self) -> Optional[str]:
+        """Get the raw business_config_uri from local config."""
+        return self.local_config.get('business_config_uri')
+
+    def get_logic_base_uri(self) -> Optional[str]:
+        """Derive logic base URI by stripping filename from business_config_uri.
+
+        Returns:
+            Base URI (e.g. 'https://example.com/logic/') or None if local path
+        """
+        uri = self.get_business_config_uri()
+        if not uri:
+            return None
+
+        parsed = urllib.parse.urlparse(uri)
+        if parsed.scheme in ('http', 'https'):
+            # Remote — strip filename to get base
+            base = uri.rsplit('/', 1)[0]
+            return base + '/' if not base.endswith('/') else base
+        return None
+
     def get_rules_base_uri(self) -> Optional[str]:
         """Get rules base URI from business config."""
         return self.business_config.get('rules_base_uri')
@@ -114,7 +135,7 @@ class ConfigLoader:
 
         Logic:
         1. If rules_base_uri exists: {base_uri}/{entity_type}/{rule_id}.py
-        2. Otherwise: relative path ../rules/{entity_type}/{rule_id}.py
+        2. Otherwise: relative path ../logic/rules/{entity_type}/{rule_id}.py
 
         Args:
             entity_type: Entity type (loan, facility, deal)
@@ -133,4 +154,4 @@ class ConfigLoader:
             return f"{base_uri}{entity_type}/{rule_filename}"
         else:
             # Backward compatibility: relative path
-            return f"../rules/{entity_type}/{rule_filename}"
+            return f"../logic/rules/{entity_type}/{rule_filename}"

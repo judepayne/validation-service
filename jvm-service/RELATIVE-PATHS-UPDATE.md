@@ -17,8 +17,8 @@ Updated all file paths in examples and test files from absolute to relative path
 
 ### For Schema URLs (in entity data):
 ```
-Before: file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json
-After:  file://../models/loan.schema.v1.0.0.json
+Before: file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json
+After:  file://../logic/models/loan.schema.v1.0.0.json
 ```
 
 ### For File URIs (batch-file endpoint):
@@ -55,7 +55,7 @@ After:  file:./test/test-data/loans.json
 **File:** `test/test-data/loans.json`
 - ✅ Updated `$schema` field in all entities
 - From: `file:///Users/jude/...`
-- To: `file://../../models/loan.schema.v1.0.0.json`
+- To: `file://../../logic/models/loan.schema.v1.0.0.json`
 
 ### 4. Test Request Files
 **Directory:** `test/requests/`
@@ -71,8 +71,9 @@ All paths are relative to: **`jvm-service/`** (where the server runs)
 ### Directory Structure
 ```
 validation-service/
-├── models/
-│   └── loan.schema.v1.0.0.json    # ../models/... from jvm-service/
+├── logic/
+│   └── models/
+│       └── loan.schema.v1.0.0.json    # ../logic/models/... from jvm-service/
 └── jvm-service/
     ├── (server runs here)
     └── test/
@@ -82,7 +83,7 @@ validation-service/
 
 ### Path Examples
 From `jvm-service/` working directory:
-- Schema: `../models/loan.schema.v1.0.0.json` ✅
+- Schema: `../logic/models/loan.schema.v1.0.0.json` ✅
 - Test data: `./test/test-data/loans.json` ✅
 - Output: `./test/results/output.json` ✅
 
@@ -105,8 +106,8 @@ The `normalize-file-uri` function in `src/validation_service/utils/file_io.clj`:
 
 **Example:**
 ```
-Input:  file://../models/loan.schema.v1.0.0.json
-Output: file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schema.v1.0.0.json
+Input:  file://../logic/models/loan.schema.v1.0.0.json
+Output: file:///Users/jude/Dropbox/Projects/validation-service/logic/models/loan.schema.v1.0.0.json
 ```
 
 ### Where Normalization Happens
@@ -136,7 +137,7 @@ Output: file:///Users/jude/Dropbox/Projects/validation-service/models/loan.schem
 curl -X POST http://localhost:8080/api/v1/validate -d '{
   "entity_type": "loan",
   "entity_data": {
-    "$schema": "file://../models/loan.schema.v1.0.0.json",
+    "$schema": "file://../logic/models/loan.schema.v1.0.0.json",
     ...
   },
   "ruleset_name": "quick"
@@ -175,7 +176,7 @@ Failed: 0
 ### Docker Example
 ```dockerfile
 WORKDIR /app/jvm-service
-COPY models/ ../models/
+COPY logic/ ../logic/
 COPY jvm-service/ ./
 RUN clojure -M -e "(compile 'validation-service.core)"
 CMD ["java", "-jar", "target/validation-service.jar"]
@@ -183,7 +184,7 @@ CMD ["java", "-jar", "target/validation-service.jar"]
 
 Paths will work because:
 - Working directory is `/app/jvm-service`
-- Schema at `/app/models/` → `../models/` ✅
+- Schema at `/app/logic/models/` → `../logic/models/` ✅
 - Test data at `/app/jvm-service/test/test-data/` → `./test/test-data/` ✅
 
 ## API Examples with Relative Paths
@@ -195,14 +196,14 @@ Paths will work because:
     {
       "entity_type": "loan",
       "entity_data": {
-        "$schema": "file://../models/loan.schema.v1.0.0.json",
+        "$schema": "file://../logic/models/loan.schema.v1.0.0.json",
         "loan_number": "LN-001",
         ...
       }
     }
   ],
   "id_fields": {
-    "file://../models/loan.schema.v1.0.0.json": "loan_number"
+    "file://../logic/models/loan.schema.v1.0.0.json": "loan_number"
   },
   "ruleset_name": "quick"
 }
@@ -213,10 +214,10 @@ Paths will work because:
 {
   "file_uri": "file:./test/test-data/loans.json",
   "entity_types": {
-    "file://../../models/loan.schema.v1.0.0.json": "loan"
+    "file://../../logic/models/loan.schema.v1.0.0.json": "loan"
   },
   "id_fields": {
-    "file://../../models/loan.schema.v1.0.0.json": "loan_number"
+    "file://../../logic/models/loan.schema.v1.0.0.json": "loan_number"
   },
   "ruleset_name": "quick"
 }
@@ -231,7 +232,7 @@ If you have existing data files or scripts using absolute paths:
 **Option 1: Update to relative paths (recommended)**
 ```bash
 # Replace absolute paths with relative
-sed -i 's|file:///full/path/to/models/|file://../models/|g' your-data.json
+sed -i 's|file:///full/path/to/logic/models/|file://../logic/models/|g' your-data.json
 ```
 
 **Option 2: Continue using absolute paths**

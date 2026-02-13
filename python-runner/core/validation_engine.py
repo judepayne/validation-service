@@ -1,19 +1,13 @@
-import sys
 import os
-import yaml
 from pathlib import Path
 from typing import List, Dict, Any
+
+# logic/ directory must be on sys.path before these imports
+# (handled by runner.py bootstrap via LogicPackageFetcher)
 from .rule_loader import RuleLoader
 from .rule_executor import RuleExecutor
 from entity_helpers.version_registry import get_registry
 from entity_helpers import create_entity_helper
-
-# Add parent directory to Python path for rules module imports
-# This allows rules files to import from rules.base regardless of working directory
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_parent_dir = os.path.dirname(os.path.dirname(_current_dir))
-if _parent_dir not in sys.path:
-    sys.path.insert(0, _parent_dir)
 
 
 class ValidationEngine:
@@ -45,7 +39,7 @@ class ValidationEngine:
         # Backward compatibility: support master_rules_directory (deprecated)
         # If no rules_base_uri and no master_rules_directory, assume ../rules
         if 'master_rules_directory' not in self.config and not self.config_loader.get_rules_base_uri():
-            self.config['master_rules_directory'] = '../rules'
+            self.config['master_rules_directory'] = '../logic/rules'
 
         # Verify rules directory exists (only for backward compat mode)
         if 'master_rules_directory' in self.config:
