@@ -43,6 +43,23 @@ Service configuration including port, Python runner path, and coordination servi
 **Python Rule Runner** (`python-runner/config.yaml`)
 Defines rule sets (quick/thorough), schema version mappings, and entity helper routing. Controls which rules execute for each entity type and schema version.
 
+# Schemas
+
+schemas are JSON schema and live in the `models` folder.
+
+# Writing a rule
+
+rules lives in `python-runner\rules\<entity-sub-folder>` and must inherit from the base class. Each rule has the following interface:
+
+`get_id` -> return the id of a rule (its filename minuse the .py extension)
+`validates` -> return the name of the data entity type that the rule validates.
+`required_data` -> returns the (names of) additional data entities required for the rule to run e.g. 'parent facility'
+`description` -> plain english description of the rule
+`set_required_data` -> for passing additional data into the rule class
+`run` -> runs arbitrary logc defined in the rule
+
+Lots more details in the docs!
+
 ## Container Quick Start
 
 ### Build
