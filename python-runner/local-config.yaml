@@ -6,9 +6,7 @@
 # Supports: relative paths, file:// (absolute), http://, https://
 business_config_uri: "../logic/business-config.yaml"
 
-# Optional: Cache directory for remote configs and rules
+# Optional: Cache directory for remote logic package
+# Only used when business_config_uri is a remote URL
 # Default: /tmp/validation-cache
-rule_cache_dir: "/tmp/validation-cache"
-
-# Optional: Enable/disable caching (default: true)
-cache_enabled: true
+logic_cache_dir: "/tmp/validation-cache"

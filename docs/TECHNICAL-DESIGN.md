@@ -514,8 +514,8 @@ Tier 1: Infrastructure                  Tier 2: Business Logic
 │   local-config.yaml     │────────────▶│   business-config.yaml  │
 │                         │  references │                         │
 │ • business_config_uri   │             │ • Rule set definitions  │
-│ • rule_cache_dir        │             │ • Schema→helper mapping │
-│ • cache_enabled         │             │ • Version compatibility │
+│ • logic_cache_dir       │             │ • Schema→helper mapping │
+│                         │             │ • Version compatibility │
 └─────────────────────────┘             │ • rules_base_uri (opt)  │
                                         │                         │
                                         │   rules/                │
@@ -527,8 +527,7 @@ Tier 1: Infrastructure                  Tier 2: Business Logic
 
 ```yaml
 business_config_uri: "../logic/business-config.yaml"   # or https://...
-rule_cache_dir: "/tmp/validation-cache"
-cache_enabled: true
+logic_cache_dir: "/tmp/validation-cache"              # only used for remote URIs
 ```
 
 The `business_config_uri` is a **layer of indirection**: it points from the service's infrastructure config into the `logic/` directory where all business-owned assets reside. This URI supports relative paths, `file://`, `http://`, and `https://` — meaning `logic/` could be a local directory, a mounted volume, or a remote CDN. Remote configs are fetched and cached by `ConfigLoader` using SHA256-keyed files.
@@ -577,7 +576,7 @@ business_config_uri: "https://rules-cdn.example.com/prod/business-config.yaml"
 rules_base_uri: "https://rules-cdn.example.com/prod/rules"
 ```
 
-Rules are fetched via `RuleFetcher` with SHA256-based caching in `rule_cache_dir`. The rules team can deploy new rules independently of the service.
+Rules are fetched via `RuleFetcher` with SHA256-based caching in `logic_cache_dir`. The rules team can deploy new rules independently of the service.
 
 ### Remote Logic Package Fetching
 

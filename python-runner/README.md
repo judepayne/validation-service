@@ -87,8 +87,7 @@ This means switching from local development to remote logic is a single config c
 **Tier 1 — Infrastructure** (`python-runner/local-config.yaml`, service team):
 ```yaml
 business_config_uri: "../logic/business-config.yaml"   # or https://...
-rule_cache_dir: "/tmp/validation-cache"
-cache_enabled: true
+logic_cache_dir: "/tmp/validation-cache"              # only used for remote URIs
 ```
 
 **Tier 2 — Business logic** (`logic/business-config.yaml`, rules team):

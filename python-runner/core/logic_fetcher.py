@@ -26,9 +26,10 @@ class LogicPackageFetcher:
         "entity_helpers/version_registry.py",
     ]
 
+    DEFAULT_CACHE_DIR = "/tmp/validation-cache"
+
     def __init__(self, cache_dir: Optional[str] = None):
-        self.cache_dir = Path(cache_dir or os.environ.get(
-            'VALIDATION_CACHE_DIR', '/tmp/validation-cache'))
+        self._cache_dir_override = cache_dir
 
     def resolve_logic_dir(self, local_config_path: str) -> str:
         """Resolve logic directory from local config.
@@ -43,9 +44,14 @@ class LogicPackageFetcher:
         Returns:
             Absolute path to logic directory (local or cached)
         """
-        # Load local config to get business_config_uri
+        # Load local config to get business_config_uri and cache settings
         with open(local_config_path) as f:
             local_config = yaml.safe_load(f)
+
+        # Set cache dir from config (constructor override takes precedence)
+        self.cache_dir = Path(self._cache_dir_override
+                              or local_config.get("logic_cache_dir")
+                              or self.DEFAULT_CACHE_DIR)
 
         business_config_uri = local_config.get("business_config_uri")
         if not business_config_uri:

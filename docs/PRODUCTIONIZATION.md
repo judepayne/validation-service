@@ -330,7 +330,7 @@ Because rule/helper files never change once published, they can be cached indefi
 ```yaml
 # python-runner/local-config.yaml (production)
 business_config_uri: "https://rules-cdn.example.com/prod/business-config.yaml"
-rule_cache_dir: "/var/cache/validation-rules"
+logic_cache_dir: "/var/cache/validation-logic"
 
 # logic/business-config.yaml (hosted remotely, owned by rules team)
 rules_base_uri: "https://rules-cdn.example.com/prod/rules"
