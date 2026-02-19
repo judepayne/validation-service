@@ -1,0 +1,26 @@
+# Clojure
+.cpcache/
+.nrepl-port
+target/
+.lsp/
+.clj-kondo/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# Docker
+*.tar
