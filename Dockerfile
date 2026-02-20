@@ -43,34 +43,29 @@ RUN apt-get update && \
 # Create application directory
 WORKDIR /app
 
-# Clone validation-lib (contains Python runner, logic folder)
-RUN git clone https://github.com/judepayne/validation-lib.git && \
-    cd validation-lib && \
-    git checkout 69554f5fbbf03597a76272a4891ddbe884f4be0f
+# Clone validation-lib (contains Python validation code, logic folder, config)
+RUN git clone https://github.com/judepayne/validation-lib.git
 
 # Install Python dependencies for validation-lib
-RUN pip3 install --no-cache-dir -r validation-lib/python-runner/requirements.txt
+RUN pip3 install --no-cache-dir -r validation-lib/requirements.txt
 
 # Copy the built uberjar from builder stage
 COPY --from=builder /build/target/validation-service-0.1.0-SNAPSHOT-standalone.jar app.jar
 
 # Container directory structure:
 # /app/
-# ├── validation-lib/              # Cloned from GitHub
-# │   ├── python-runner/
-# │   │   ├── runner.py
+# ├── app.jar                      # Validation service uberjar
+# ├── validation-lib/           # Cloned from GitHub
+# │   ├── validation_lib/
+# │   │   ├── jsonrpc_server.py
 # │   │   ├── local-config.yaml
+# │   │   ├── api.py
 # │   │   └── core/
 # │   └── logic/
 # │       ├── business-config.yaml
 # │       ├── rules/
-# │       └── models/
-# ├── src/                         # This service's source
-# │   └── validation_service/
-# ├── resources/                   # This service's config
-# │   ├── library-config.edn
-# │   └── web-config.edn
-# └── deps.edn
+# │       └── schemas/
+# └── web-config.edn               # Service configuration
 
 # Expose service port
 EXPOSE 8080
