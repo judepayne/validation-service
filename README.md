@@ -1,21 +1,21 @@
 # Validation Service - REST API Example
 
-A REST API web service wrapper around the [validation-lib](https://github.com/judepayne/validation-lib) library. This is a reference implementation showing how to expose validation capabilities via HTTP endpoints.
+A REST API web service that communicates with [validation-lib](https://github.com/judepayne/validation-lib) via JSON-RPC. This is a reference implementation showing how to expose validation capabilities via HTTP endpoints.
 
 ## Related Projects
 
-- [validation-lib](https://github.com/judepayne/validation-lib) - Core validation library (Clojure + Python)
+- [validation-lib](https://github.com/judepayne/validation-lib) - Pure Python validation library with JSON-RPC server
 - [validation-mcp-server](https://github.com/judepayne/validation-mcp-server) - MCP server for Claude Desktop integration
 
 ## What is This?
 
-This is a thin web app layer that provides:
+This is a thin web app layer (Clojure) that provides:
 - REST API endpoints for validation operations
 - Swagger/OpenAPI documentation
 - Docker containerization
 - Example deployment configuration
 
-The core validation logic lives in validation-lib. This service just wraps it with HTTP.
+The core validation logic lives in validation-lib (Python). This service communicates with it via JSON-RPC over stdin/stdout.
 
 ## REST API Endpoints
 
@@ -38,6 +38,27 @@ Validates entities loaded from a file URI (file://, http://, https://).
 Service health check endpoint.
 
 Interactive API Documentation: http://localhost:8080/swagger-ui
+
+## Prerequisites
+
+Before running validation-service, you need to **clone validation-lib** into this directory:
+
+```bash
+# Clone validation-lib from GitHub
+git clone https://github.com/judepayne/validation-lib.git
+```
+
+This creates a `validation-lib/` directory containing:
+- The Python validation code
+- Business logic (rules, schemas, entity helpers in `logic/`)
+- Configuration files
+
+**Why?** validation-service runs validation-lib as a subprocess and needs access to both the Python code and the business logic. The `validation-lib/` directory is git-ignored (not tracked in this repository) since it comes from the validation-lib repository.
+
+**Requirements:**
+- Clojure CLI (1.11+)
+- Python 3.9+
+- Git
 
 ## Quick Start
 
@@ -84,9 +105,6 @@ Build the image:
 # Basic build
 docker build -t validation-service .
 
-# Build with specific validation-lib version (edit Dockerfile first to change SHA)
-docker build -t validation-service:v1.0 .
-
 # Build with no cache (ensures fresh clone of validation-lib)
 docker build --no-cache -t validation-service .
 
@@ -95,12 +113,12 @@ docker build --no-cache -t validation-service .
 ```
 
 What happens during build:
-1. Builder stage: Downloads Clojure dependencies via git (validation-lib)
+1. Builder stage: Compiles Clojure service into uberjar
 2. Runtime stage:
    - Installs Python 3 and Git
    - Clones validation-lib from GitHub
    - Installs Python dependencies (jsonschema, pyyaml, etc.)
-   - Copies web service code and configs
+   - Copies web service JAR and configs
    - Sets up directory structure
 
 Run the container:
@@ -170,20 +188,18 @@ docker rm -f validation-service
 Container structure:
 ```
 /app/
-├── validation-lib/              # Cloned from GitHub
-│   ├── python-runner/
-│   │   ├── runner.py
+├── app.jar                      # Validation service uberjar
+├── validation-lib/           # Cloned from GitHub
+│   ├── validation_lib/
+│   │   ├── jsonrpc_server.py
 │   │   ├── local-config.yaml
+│   │   ├── api.py
 │   │   └── core/
 │   └── logic/
 │       ├── business-config.yaml
 │       ├── rules/
-│       └── models/
-├── src/                         # Web service source
-│   └── validation_service/
-├── resources/                   # Configs
-│   └── web-config.edn
-└── deps.edn
+│       └── schemas/
+└── web-config.edn               # Service configuration
 ```
 
 Environment variables:
@@ -199,44 +215,44 @@ Note for production: For better image size and security, consider:
 
 ## Configuration
 
-The service uses validation-lib with automatic configuration - no manual setup required.
+The service communicates with validation-lib via JSON-RPC over a subprocess.
+
+### Architecture
+
+```
+validation-service (Clojure/Ring)
+    ↓ JSON-RPC (stdin/stdout)
+validation-lib (Python subprocess)
+    ↓
+Business Logic (rules, schemas, configs)
+```
 
 ### How It Works
 
-validation-lib automatically discovers and configures the Python runner at startup:
+1. **Service Startup**: The service spawns validation-lib as a subprocess when it starts
+2. **JSON-RPC Communication**: All validation requests are sent via JSON-RPC 2.0 protocol over stdin/stdout
+3. **Configuration Loading**: validation-lib loads its `local-config.yaml` which defines where business logic is located
+4. **Long-lived Process**: The Python subprocess stays alive for the lifetime of the service (no startup cost per request)
 
-1. Non-JAR (development): Uses python-runner directly from `.gitlibs/` where Clojure downloads the git dependency
-2. JAR (production): Extracts python-runner and logic from JAR to `~/.cache/validation-lib/` on first run
+### Configuration Files
 
-The bundled `local-config.yaml` from validation-lib defines where business logic (rules, schemas) is located. This can be:
-- Local path (development): Points to logic/ in the git dependency
-- Remote URL (production): Downloads logic from a central repository at runtime
-
-See [validation-lib README](https://github.com/judepayne/validation-lib#how-the-library-manages-python-dependencies-in-your-app) for details on JAR deployment modes.
-
-### JAR Build Configuration
-
-The `build.clj` file copies both python-runner/ and logic/ from validation-lib into the JAR during compilation:
+**`resources/web-config.edn`** - Web service settings:
 
 ```clojure
-;; build.clj extracts from validation-lib git dependency
-(copy-python-runner basis class-dir)  ; Copies python-runner files
-(copy-logic basis class-dir)          ; Copies logic files (if using local mode)
-```
-
-### Web Service Configuration
-
-Web service settings in `resources/web-config.edn`:
-
-```clojure
-{:server
+{:service
  {:port 8080
   :host "0.0.0.0"}
 
- :coordination_service  ; Not implemented in POC
- {:base_url "http://localhost:8081"
-  :timeout_ms 5000}}
+ :validation_lib_py
+ {:python_executable "python3"
+  :script_path "../validation-lib"  ; Path to validation-lib directory
+  :debug false}}
 ```
+
+The `:validation_lib_py` configuration specifies:
+- `:python_executable` - Python interpreter to use (default: python3)
+- `:script_path` - Path to validation-lib directory (can be relative or absolute)
+- `:debug` - Enable debug logging in the Python subprocess (default: false)
 
 ## Example Requests
 
@@ -277,12 +293,10 @@ curl http://localhost:8080/api/v1/discover-rulesets | jq
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/discover-rules \
-  -H "Content-Type: application/json" \
+  -H "Content-Type": "application/json" \
   -d '{
     "entity_type": "loan",
-    "entity_data": {
-      "$schema": "file:///path/to/loan.schema.json"
-    },
+    "schema_url": "https://bank.example.com/schemas/loan/v1.0.0",
     "ruleset_name": "quick"
   }' | jq
 ```
@@ -290,72 +304,133 @@ curl -X POST http://localhost:8080/api/v1/discover-rules \
 ## Architecture
 
 ```
-┌──────────────────────────────────┐
-│   validation-service (this)      │
-│   ┌────────────────────────────┐ │
-│   │  Ring + Reitit HTTP Layer  │ │
-│   │  - Routes & handlers       │ │
-│   │  - Swagger UI              │ │
-│   │  - Request/response        │ │
-│   └────────────┬───────────────┘ │
-└────────────────┼─────────────────┘
-                 │
-                 │ ValidationService Protocol
-                 │
-┌────────────────▼─────────────────┐
-│       validation-lib             │
-│   ┌──────────────────────────┐   │
-│   │  Core Validation Engine  │   │
-│   │  - Workflow orchestration│   │
-│   │  - JSON-RPC client       │   │
-│   │  - Python runner mgmt    │   │
-│   └──────────────────────────┘   │
-└──────────────────────────────────┘
+┌────────────────────────────────────────┐
+│   validation-service (Clojure)         │
+│   ┌──────────────────────────────────┐ │
+│   │  Ring + Reitit HTTP Layer        │ │
+│   │  - Routes & handlers             │ │
+│   │  - Swagger UI                    │ │
+│   │  - Request/response              │ │
+│   └────────────┬─────────────────────┘ │
+│                │                        │
+│   ┌────────────▼─────────────────────┐ │
+│   │  JSON-RPC Client                 │ │
+│   │  - Subprocess management         │ │
+│   │  - stdin/stdout communication    │ │
+│   └────────────┬─────────────────────┘ │
+└────────────────┼───────────────────────┘
+                 │ JSON-RPC 2.0
+                 │ (stdin/stdout)
+┌────────────────▼───────────────────────┐
+│   validation-lib (Python)           │
+│   ┌──────────────────────────────────┐ │
+│   │  JSON-RPC Server                 │ │
+│   │  - Request parsing               │ │
+│   │  - Method dispatching            │ │
+│   └────────────┬─────────────────────┘ │
+│                │                        │
+│   ┌────────────▼─────────────────────┐ │
+│   │  Core Validation Engine          │ │
+│   │  - Rule execution                │ │
+│   │  - Schema validation             │ │
+│   │  - Configuration management      │ │
+│   └──────────────────────────────────┘ │
+└────────────────────────────────────────┘
 ```
 
-This service is a thin wrapper - all validation logic lives in validation-lib.
+This service is a thin HTTP wrapper around validation-lib. All validation logic lives in the Python library.
 
 ## Dependencies
 
 The service depends on:
-- validation-lib (via git deps)
-- Ring + Reitit (HTTP server and routing)
-- Python 3.x (for rule execution via validation-lib)
+- **Clojure dependencies** (defined in deps.edn):
+  - Ring + Reitit (HTTP server and routing)
+  - Cheshire (JSON parsing for JSON-RPC)
+  - Aero (configuration)
+  - tools.logging (logging)
+- **External process**:
+  - validation-lib (Python) - Must be available at the configured `:script_path`
+  - Python 3.x - Required to run validation-lib
 
-Current dependency in `deps.edn`:
-```clojure
-{:deps
- {validation-lib/validation-lib
-  {:git/url "https://github.com/judepayne/validation-lib"
-   :git/sha "7e4c2389913c864518c2707535219a89cb256686"}}}
-```
+The service does NOT have a Clojure dependency on validation-lib. Instead, it communicates with validation-lib via JSON-RPC over a subprocess.
 
 ## Deployment
 
+### Local Development Setup
+
+1. **Clone validation-lib** (or ensure it's available at the configured path):
+   ```bash
+   cd /path/to/projects/
+   git clone https://github.com/judepayne/validation-lib
+   ```
+
+2. **Update web-config.edn** to point to validation-lib:
+   ```clojure
+   :validation_lib_py
+   {:python_executable "python3"
+    :script_path "../validation-lib"  ; Adjust path as needed
+    :debug false}
+   ```
+
+3. **Run the service**:
+   ```bash
+   clojure -M:dev -m validation-service.core
+   ```
+
+### JAR Deployment
+
+Build the uberjar:
+```bash
+clojure -T:build clean
+clojure -T:build uber
+```
+
+Run the JAR:
+```bash
+# Ensure validation-lib is available
+java -jar target/validation-service-0.1.0-SNAPSHOT-standalone.jar
+```
+
+**Note**: The JAR expects validation-lib to be available at the path specified in `web-config.edn`. You can either:
+- Package validation-lib alongside the JAR
+- Use an absolute path in the configuration
+- Deploy as separate containers (microservices architecture)
+
 ### Docker Deployment
 
-The Dockerfile bundles:
+The Dockerfile should bundle:
 - JVM service (this web app)
-- Python runner (from validation-lib)
-- Example logic folder (rules + schemas)
+- validation-lib (cloned or copied into the image)
+- Python 3.x runtime
 
+Example multi-stage Dockerfile:
 ```dockerfile
-# Multi-stage build for minimal image size
 FROM clojure:temurin-21-tools-deps AS builder
-# ... build steps
+WORKDIR /build
+COPY deps.edn build.clj ./
+COPY src ./src
+COPY resources ./resources
+RUN clojure -T:build uber
 
-FROM eclipse-temurin:21-jre-alpine
-# ... runtime steps
+FROM eclipse-temurin:21-jre
+RUN apt-get update && apt-get install -y python3 python3-pip git
+WORKDIR /app
+COPY --from=builder /build/target/*.jar app.jar
+RUN git clone https://github.com/judepayne/validation-lib
+RUN pip3 install -r validation-lib/requirements.txt
+ENV JAVA_OPTS="-Xmx512m"
+EXPOSE 8080
+CMD ["java", "-jar", "app.jar"]
 ```
 
 ### Environment-Specific Logic
 
-validation-lib's bundled `local-config.yaml` controls where business logic is loaded from. For different environments, validation-lib can be configured with different logic sources:
+validation-lib's `local-config.yaml` controls where business logic is loaded from:
 
-- Development: Uses local logic/ from the git dependency
-- Production: Can download logic from remote URL (e.g., `https://rules-repo.example.com/prod/logic`)
+- **Development**: Points to local logic/ directory
+- **Production**: Can download logic from remote URL (e.g., S3, Git, HTTP)
 
-This is configured in validation-lib, not in this service. See [validation-lib deployment modes](https://github.com/judepayne/validation-lib#jar-deployment-production) for details.
+See [validation-lib README](https://github.com/judepayne/validation-lib#configuration) for configuration details.
 
 ## Extending This Service
 

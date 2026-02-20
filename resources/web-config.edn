@@ -30,4 +30,9 @@
   :health_check_path "/health"
   :metrics_path "/metrics"}
 
+ :validation_lib_py
+ {:python-executable "python3"
+  :script-path "validation-lib"
+  :debug false}
+
  :environment "development"}
