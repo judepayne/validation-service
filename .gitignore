@@ -23,5 +23,9 @@ logs/
 # OS
 .DS_Store
 
+# Emacs backup files
+*~
+*.bak
+
 # Docker
 *.tar
