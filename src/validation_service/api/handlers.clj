@@ -1,5 +1,6 @@
 (ns validation-service.api.handlers
-  (:require [validation-service.utils.file-io :as file-io]
+  (:require [validation-service.client.lifecycle :as client]
+            [validation-service.utils.file-io :as file-io]
             [clojure.tools.logging :as log])
   (:import [java.time Instant LocalDateTime]
            [java.time.format DateTimeFormatter]))
@@ -42,7 +43,7 @@
   }
 
   Returns hierarchical validation results."
-  [{:keys [body validation-service] :as request}]
+  [{:keys [body] :as request}]
   (let [entity-type (get body "entity_type")
         entity-data (get body "entity_data")
         ruleset-name (get body "ruleset_name" "quick")]
@@ -53,10 +54,9 @@
                :entity-id (get entity-data "id")})
 
     (try
-      (let [results (.validate validation-service
-                              entity-type
-                              entity-data
-                              ruleset-name)
+      (let [results (client/validate entity-type
+                                     entity-data
+                                     ruleset-name)
             ;; Build summary
             total (count results)
             passed (count (filter #(= "PASS" (get % "status")) results))
@@ -109,10 +109,12 @@
   }
 
   Returns comprehensive rule metadata."
-  [{:keys [body validation-service] :as request}]
+  [{:keys [body] :as request}]
   (let [entity-type (get body "entity_type")
         schema-url (get body "schema_url")
-        ruleset-name (get body "ruleset_name" "quick")]
+        ruleset-name (get body "ruleset_name" "quick")
+        ;; Create minimal entity data with schema for discovery
+        entity-data {"$schema" schema-url}]
 
     (log/info "Received discover-rules request"
               {:entity-type entity-type
@@ -120,10 +122,9 @@
                :ruleset ruleset-name})
 
     (try
-      (let [rules (.discover-rules validation-service
-                                  entity-type
-                                  schema-url
-                                  ruleset-name)]
+      (let [rules (client/discover-rules entity-type
+                                         entity-data
+                                         ruleset-name)]
 
         (json-response 200
                       {:entity_type entity-type
@@ -160,10 +161,10 @@
 
   Returns metadata and statistics for all available rulesets.
   No parameters required."
-  [{:keys [validation-service] :as request}]
+  [request]
   (log/info "Received discover-rulesets request")
   (try
-    (let [rulesets (.discover-rulesets validation-service)]
+    (let [rulesets (client/discover-rulesets)]
       (json-response 200
                     {:rulesets rulesets
                      :timestamp (.toString (java.time.Instant/now))
@@ -202,12 +203,16 @@
   }
 
   Returns batch validation results or file write confirmation."
-  [{:keys [body validation-service] :as request}]
+  [{:keys [body] :as request}]
   (let [entities (get body "entities")
         id-fields (get body "id_fields")
         ruleset-name (get body "ruleset_name" "quick")
         output-mode (get body "output_mode" "response")
-        output-path (get body "output_path")]
+        output-path (get body "output_path")
+        ;; Convert id-fields map to list for Python API
+        id-fields-list (if (map? id-fields)
+                        (vec (vals id-fields))
+                        id-fields)]
 
     ;; Validate required parameters
     (when-not entities
@@ -222,10 +227,6 @@
       (throw (ex-info "Missing required parameter: id_fields"
                      {:type :validation-error})))
 
-    (when-not (map? id-fields)
-      (throw (ex-info "Parameter 'id_fields' must be a map"
-                     {:type :validation-error})))
-
     (when (and (= output-mode "file") (not output-path))
       (throw (ex-info "Parameter 'output_path' required when output_mode='file'"
                      {:type :validation-error})))
@@ -237,10 +238,9 @@
                :id-fields-count (count id-fields)})
 
     (try
-      (let [results (.batch-validate validation-service
-                                    entities
-                                    id-fields
-                                    ruleset-name)
+      (let [results (client/batch-validate entities
+                                           id-fields-list
+                                           ruleset-name)
 
             ;; Calculate overall statistics
             total-entities (count results)
@@ -324,7 +324,7 @@
   }
 
   Returns batch validation results or file write confirmation."
-  [{:keys [body validation-service] :as request}]
+  [{:keys [body] :as request}]
   (let [file-uri (get body "file_uri")
         entity-types (get body "entity_types")
         id-fields (get body "id_fields")
@@ -365,11 +365,10 @@
                :output-mode output-mode})
 
     (try
-      (let [results (.batch-file-validate validation-service
-                                         file-uri
-                                         entity-types
-                                         id-fields
-                                         ruleset-name)
+      (let [results (client/batch-file-validate file-uri
+                                                entity-types
+                                                id-fields
+                                                ruleset-name)
 
             ;; Calculate overall statistics
             total-entities (count results)

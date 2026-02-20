@@ -17,7 +17,7 @@
 
 (def validate-request-example
   {"entity_type" "loan"
-   "entity_data" {"$schema" "file://../logic/models/loan.schema.v1.0.0.json"
+   "entity_data" {"$schema" "file://logic/models/loan.schema.v1.0.0.json"
                   "id" "LOAN-12345"
                   "loan_number" "LN-001"
                   "facility_id" "FAC-100"
@@ -32,14 +32,14 @@
 
 (def discover-rules-request-example
   {"entity_type" "loan"
-   "schema_url" "file://../logic/models/loan.schema.v1.0.0.json"
+   "schema_url" "file://logic/models/loan.schema.v1.0.0.json"
    "ruleset_name" "quick"})
 
 (def batch-request-example
   "Example batch validation request with inline entities"
   {"entities"
    [{"entity_type" "loan"
-     "entity_data" {"$schema" "file://../logic/models/loan.schema.v1.0.0.json"
+     "entity_data" {"$schema" "file://logic/models/loan.schema.v1.0.0.json"
                     "id" "LOAN-12345"
                     "loan_number" "LN-001"
                     "facility_id" "FAC-100"
@@ -51,7 +51,7 @@
                             "maturity_date" "2025-01-01"}
                     "status" "active"}}
     {"entity_type" "loan"
-     "entity_data" {"$schema" "file://../logic/models/loan.schema.v1.0.0.json"
+     "entity_data" {"$schema" "file://logic/models/loan.schema.v1.0.0.json"
                     "id" "LOAN-67890"
                     "loan_number" "LN-002"
                     "facility_id" "FAC-100"
@@ -62,15 +62,15 @@
                     "dates" {"origination_date" "2024-02-01"
                             "maturity_date" "2025-02-01"}
                     "status" "active"}}]
-   "id_fields" {"file://../logic/models/loan.schema.v1.0.0.json" "loan_number"}
+   "id_fields" {"file://logic/models/loan.schema.v1.0.0.json" "loan_number"}
    "ruleset_name" "quick"
    "output_mode" "response"})
 
 (def batch-file-request-example
   "Example batch-file validation request"
-  {"file_uri" "file:./test/test-data/loans.json"
-   "entity_types" {"file://../../logic/models/loan.schema.v1.0.0.json" "loan"}
-   "id_fields" {"file://../../logic/models/loan.schema.v1.0.0.json" "loan_number"}
+  {"file_uri" "file://test-data/loans.json"
+   "entity_types" {"file://logic/models/loan.schema.v1.0.0.json" "loan"}
+   "id_fields" {"file://logic/models/loan.schema.v1.0.0.json" "loan_number"}
    "ruleset_name" "thorough"
    "output_mode" "file"
    "output_path" "/tmp/validation-results.json"})

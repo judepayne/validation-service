@@ -154,16 +154,17 @@
   (log "\n[TEST] Discover Rules")
   (try
     (let [request-body {:entity_type "loan"
-                        :entity_data {:$schema "https://bank.example.com/schemas/loan/v1.0.0"}
+                        :schema_url "https://bank.example.com/schemas/loan/v1.0.0"
                         :ruleset_name "quick"}
           response (http/post (str base-url "/api/v1/discover-rules")
                               {:headers {"Content-Type" "application/json"}
                                :body (json/generate-string request-body)})
-          body (json/parse-string (:body response) true)]
+          body (json/parse-string (:body response) true)
+          rules (:rules body)]
       (when (= (:status response) 200)
-        (log "Found" (count body) "rules")
-        (if (and (map? body)
-                 (seq body))
+        (log "Found" (count rules) "rules")
+        (if (and (coll? rules)
+                 (seq rules))
           (pass "Discover rules")
           (fail "Discover rules" "No rules returned"))))
     (catch Exception e

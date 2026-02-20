@@ -1,20 +1,11 @@
 (ns validation-service.api.routes
   (:require [validation-service.api.handlers :as handlers]
             [validation-service.api.schemas :as schemas]
-            [validation-lib.library.api :as lib]
             [reitit.ring :as ring]
             [reitit.swagger :as swagger]
             [reitit.swagger-ui :as swagger-ui]
             [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
             [clojure.tools.logging :as log]))
-
-(defn wrap-validation-service
-  "Middleware to inject ValidationService into request.
-
-  Adds :validation-service key to request map."
-  [handler validation-service]
-  (fn [request]
-    (handler (assoc request :validation-service validation-service))))
 
 (defn wrap-request-logging
   "Middleware to log incoming requests."
@@ -114,16 +105,12 @@
 (defn create-handler
   "Create Ring handler with routes, Swagger UI, and middleware.
 
-  validation-lib should auto-discover python-runner from its own classpath.
-
   Returns:
     Ring handler function"
   []
-  ;; Create validation service - no config needed, validation-lib auto-discovers
-  (log/info "Creating validation service")
-  (let [validation-service (lib/create-service nil)
+  (log/info "Creating application handler")
 
-        ;; Create router from route data
+  (let [;; Create router from route data
         router (ring/router (create-routes))
 
         ;; Create ring handler with Swagger UI and default handlers
@@ -141,12 +128,10 @@
                 :method-not-allowed (constantly {:status 405
                                                 :body {:error "Method not allowed"}})})))]
 
-    (log/info "Creating application handler with middleware")
     (log/info "Swagger UI available at /swagger-ui")
 
     ;; Apply middleware (bottom-up order)
     (-> app
-        (wrap-validation-service validation-service)  ;; Inject service
         (wrap-json-response)                          ;; Serialize response :body to JSON
         (wrap-json-body {:keywords? false})           ;; Parse JSON body (keep string keys)
         (wrap-request-logging))))                  ;; Log requests

@@ -1,6 +1,7 @@
 (ns validation-service.core
   (:require [validation-service.config :as config]
             [validation-service.api.routes :as routes]
+            [validation-service.client.lifecycle :as client]
             [ring.adapter.jetty :as jetty]
             [clojure.tools.logging :as log])
   (:gen-class))
@@ -33,6 +34,10 @@
     (let [web-config (config/load-web-config)]
       (log/info "Configuration loaded successfully")
 
+      ;; Start validation-lib-py client
+      (client/start-client! (:validation_lib_py web-config))
+      (log/info "validation-lib-py client initialized")
+
       (let [server (create-server web-config)]
         (log/info "Validation service started successfully")
         (log/info "Ready to accept requests")
@@ -41,6 +46,7 @@
         (.addShutdownHook (Runtime/getRuntime)
                          (Thread. (fn []
                                    (log/info "Shutting down validation service")
+                                   (client/stop-client!)
                                    (.stop server)
                                    (log/info "Validation service stopped"))))
 
