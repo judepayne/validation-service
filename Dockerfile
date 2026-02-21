@@ -1,12 +1,10 @@
 # Validation Service Dockerfile
 # Web API wrapper for validation-lib
 #
-# This service depends on validation-lib which provides:
-# - Python runner
-# - Logic folder (rules, schemas, business config)
-# - Core validation engine
-#
-# The Dockerfile clones validation-lib to get these components.
+# This service depends on validation-lib (installed via pip from GitHub)
+# which provides the Python JSON-RPC validation engine.
+# Business logic (rules, schemas, config) is fetched at runtime from
+# the validation-logic GitHub repo via the URL in local-config.yaml.
 
 FROM clojure:temurin-21-tools-deps-bookworm AS builder
 
@@ -34,20 +32,17 @@ RUN clojure -T:build uber
 
 FROM eclipse-temurin:21-jre-jammy
 
-# Install Python 3, Git, and curl
+# Install Python 3, pip, and curl
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip git curl && \
+    apt-get install -y python3 python3-pip curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Create application directory
 WORKDIR /app
 
-# Clone validation-lib (contains Python validation code, logic folder, config)
-RUN git clone https://github.com/judepayne/validation-lib.git
-
-# Install Python dependencies for validation-lib
-RUN pip3 install --no-cache-dir -r validation-lib/requirements.txt
+# Install validation-lib directly from GitHub
+RUN pip3 install --no-cache-dir git+https://github.com/judepayne/validation-lib.git
 
 # Copy the built uberjar from builder stage
 COPY --from=builder /build/target/validation-service-0.1.0-SNAPSHOT-standalone.jar app.jar
@@ -55,17 +50,10 @@ COPY --from=builder /build/target/validation-service-0.1.0-SNAPSHOT-standalone.j
 # Container directory structure:
 # /app/
 # ├── app.jar                      # Validation service uberjar
-# ├── validation-lib/           # Cloned from GitHub
-# │   ├── validation_lib/
-# │   │   ├── jsonrpc_server.py
-# │   │   ├── local-config.yaml
-# │   │   ├── api.py
-# │   │   └── core/
-# │   └── logic/
-# │       ├── business-config.yaml
-# │       ├── rules/
-# │       └── schemas/
 # └── web-config.edn               # Service configuration
+#
+# validation-lib is installed as a Python package via pip.
+# Business logic is fetched at runtime from validation-logic on GitHub.
 
 # Expose service port
 EXPOSE 8080

@@ -105,7 +105,7 @@
 ;; =============================================================================
 
 (def sample-loan
-  {:$schema "https://bank.example.com/schemas/loan/v1.0.0"
+  {:$schema "https://raw.githubusercontent.com/judepayne/validation-logic/main/models/loan.schema.v1.0.0.json"
    :id "LOAN-TEST-001"
    :loan_number "LN-TEST-001"
    :facility_id "FAC-TEST"
@@ -154,7 +154,7 @@
   (log "\n[TEST] Discover Rules")
   (try
     (let [request-body {:entity_type "loan"
-                        :schema_url "https://bank.example.com/schemas/loan/v1.0.0"
+                        :schema_url "https://raw.githubusercontent.com/judepayne/validation-logic/main/models/loan.schema.v1.0.0.json"
                         :ruleset_name "quick"}
           response (http/post (str base-url "/api/v1/discover-rules")
                               {:headers {"Content-Type" "application/json"}
@@ -199,7 +199,7 @@
   (try
     (let [request-body {:entities [{:entity_type "loan"
                                     :entity_data sample-loan}]
-                        :id_fields {"https://bank.example.com/schemas/loan/v1.0.0" "loan_number"}
+                        :id_fields {"https://raw.githubusercontent.com/judepayne/validation-logic/main/models/loan.schema.v1.0.0.json" "loan_number"}
                         :ruleset_name "quick"}
           response (http/post (str base-url "/api/v1/batch")
                               {:headers {"Content-Type" "application/json"}
@@ -228,7 +228,7 @@
   (start-server)
 
   ;; Wait for server to be ready (30 attempts = ~60 seconds)
-  (if (not (wait-for-server 30))
+  (if (not (wait-for-server 4))
     (do
       (log "Failed to start server, aborting tests")
       (System/exit 1))

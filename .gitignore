@@ -9,7 +9,6 @@ target/
 __pycache__/
 *.py[cod]
 *$py.class
-validation-lib/
 
 # IDE
 .idea/
