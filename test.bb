@@ -106,9 +106,9 @@
 
 (def sample-loan
   {:$schema "https://raw.githubusercontent.com/judepayne/validation-logic/main/models/loan.schema.v1.0.0.json"
-   :id "LOAN-TEST-001"
-   :loan_number "LN-TEST-001"
-   :facility_id "FAC-TEST"
+   :id "LOAN-00001"
+   :loan_number "LN-001"
+   :facility_id "FAC-100"
    :client_id "CLIENT-001"
    :financial {:principal_amount 100000
                :outstanding_balance 90000
