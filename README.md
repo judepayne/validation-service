@@ -41,24 +41,15 @@ Interactive API Documentation: http://localhost:8080/swagger-ui
 
 ## Prerequisites
 
-Before running validation-service, you need to **clone validation-lib** into this directory:
+Install validation-lib as a Python package from GitHub:
 
 ```bash
-# Clone validation-lib from GitHub
-git clone https://github.com/judepayne/validation-lib.git
+pip install git+https://github.com/judepayne/validation-lib.git
 ```
-
-This creates a `validation-lib/` directory containing:
-- The Python validation code
-- Business logic (rules, schemas, entity helpers in `logic/`)
-- Configuration files
-
-**Why?** validation-service runs validation-lib as a subprocess and needs access to both the Python code and the business logic. The `validation-lib/` directory is git-ignored (not tracked in this repository) since it comes from the validation-lib repository.
 
 **Requirements:**
 - Clojure CLI (1.11+)
 - Python 3.9+
-- Git
 
 ## Quick Start
 
@@ -240,13 +231,13 @@ Business Logic (rules, schemas, configs)
 
  :validation_lib_py
  {:python_executable "python3"
-  :script_path "../validation-lib"  ; Path to validation-lib directory
+  :script_path "."
   :debug false}}
 ```
 
 The `:validation_lib_py` configuration specifies:
 - `:python_executable` - Python interpreter to use (default: python3)
-- `:script_path` - Path to validation-lib directory (can be relative or absolute)
+- `:script_path` - Working directory for the Python subprocess. Since validation-lib is installed as a pip package it is importable from any directory; `"."` works fine. Business logic (rules, schemas) is always fetched from GitHub and cached at `/tmp/validation-lib/logic/`.
 - `:debug` - Enable debug logging in the Python subprocess (default: false)
 
 ## Example Requests
@@ -353,21 +344,12 @@ The service does NOT have a Clojure dependency on validation-lib. Instead, it co
 
 ### Local Development Setup
 
-1. **Clone validation-lib** (or ensure it's available at the configured path):
+1. **Install validation-lib** via pip:
    ```bash
-   cd /path/to/projects/
-   git clone https://github.com/judepayne/validation-lib
+   pip install git+https://github.com/judepayne/validation-lib.git
    ```
 
-2. **Update web-config.edn** to point to validation-lib:
-   ```clojure
-   :validation_lib_py
-   {:python_executable "python3"
-    :script_path "../validation-lib"  ; Adjust path as needed
-    :debug false}
-   ```
-
-3. **Run the service**:
+2. **Run the service**:
    ```bash
    clojure -M:dev -m validation-service.core
    ```

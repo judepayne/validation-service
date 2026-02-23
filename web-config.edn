@@ -32,7 +32,7 @@
 
  :validation_lib_py
  {:python_executable "python3"
-  :script_path "../validation-lib"
+  :script_path "."
   :debug true}
 
  :environment "development"}
