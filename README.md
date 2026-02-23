@@ -95,7 +95,7 @@ lsof -ti :8080 | xargs kill -9
 The Dockerfile creates a self-contained image that includes:
 - JVM runtime (Eclipse Temurin 21)
 - Python 3 + pip
-- validation-lib (cloned from GitHub at build time)
+- validation-lib (installed via pip from GitHub at build time, pinned to a specific SHA)
 - This web service code
 - All dependencies
 
@@ -115,10 +115,9 @@ docker build --no-cache -t validation-service .
 What happens during build:
 1. Builder stage: Compiles Clojure service into uberjar
 2. Runtime stage:
-   - Installs Python 3 and Git
-   - Clones validation-lib from GitHub
-   - Installs Python dependencies (jsonschema, pyyaml, etc.)
-   - Copies web service JAR and configs
+   - Installs Python 3 and pip
+   - Installs validation-lib as a Python package via pip (from a pinned GitHub SHA)
+   - Copies web service JAR
    - Sets up directory structure
 
 Run the container:
@@ -188,18 +187,13 @@ docker rm -f validation-service
 Container structure:
 ```
 /app/
-├── app.jar                      # Validation service uberjar
-├── validation-lib/           # Cloned from GitHub
-│   ├── validation_lib/
-│   │   ├── jsonrpc_server.py
-│   │   ├── local-config.yaml
-│   │   ├── api.py
-│   │   └── core/
-│   └── logic/
-│       ├── business-config.yaml
-│       ├── rules/
-│       └── schemas/
-└── web-config.edn               # Service configuration
+└── app.jar                      # Validation service uberjar
+
+# validation-lib is installed as a Python package (pip), not a directory under /app.
+# Business logic (rules, schemas) is fetched at runtime from the validation-logic
+# GitHub repo via the URL configured in validation-lib's local-config.yaml.
+# A web-config.edn must be present in the working directory (mount as a volume or
+# bake into a derived image) to configure port, script-path, etc.
 ```
 
 Environment variables:
@@ -230,9 +224,10 @@ Business Logic (rules, schemas, configs)
 ### How It Works
 
 1. **Service Startup**: The service spawns validation-lib as a subprocess when it starts
-2. **JSON-RPC Communication**: All validation requests are sent via JSON-RPC 2.0 protocol over stdin/stdout
-3. **Configuration Loading**: validation-lib loads its `local-config.yaml` which defines where business logic is located
-4. **Long-lived Process**: The Python subprocess stays alive for the lifetime of the service (no startup cost per request)
+2. **Auto-reload on startup**: `ValidationService.__init__()` automatically fetches fresh rules from GitHub if the local cache is older than `logic_cache_max_age_seconds` (default 30 min, configured in validation-lib's `local-config.yaml`). This means the subprocess always starts with up-to-date rules.
+3. **JSON-RPC Communication**: All validation requests are sent via JSON-RPC 2.0 protocol over stdin/stdout
+4. **Configuration Loading**: validation-lib loads its `local-config.yaml` which defines where business logic is located
+5. **Long-lived Process**: The Python subprocess stays alive for the lifetime of the service (no startup cost per request). Mid-session cache staleness is checked automatically every 5 minutes.
 
 ### Configuration Files
 
@@ -413,11 +408,11 @@ COPY resources ./resources
 RUN clojure -T:build uber
 
 FROM eclipse-temurin:21-jre
-RUN apt-get update && apt-get install -y python3 python3-pip git
+RUN apt-get update && apt-get install -y python3 python3-pip curl
 WORKDIR /app
 COPY --from=builder /build/target/*.jar app.jar
-RUN git clone https://github.com/judepayne/validation-lib
-RUN pip3 install -r validation-lib/requirements.txt
+# Pin validation-lib to a specific SHA for reproducible builds
+RUN pip3 install --no-cache-dir git+https://github.com/judepayne/validation-lib.git@dd2a841
 ENV JAVA_OPTS="-Xmx512m"
 EXPOSE 8080
 CMD ["java", "-jar", "app.jar"]
