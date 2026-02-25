@@ -212,7 +212,10 @@
         ;; Convert id-fields map to list for Python API
         id-fields-list (if (map? id-fields)
                         (vec (vals id-fields))
-                        id-fields)]
+                        id-fields)
+        ;; Python batch_validate expects bare entity dicts (with $schema), not HTTP wrapper objects.
+        ;; Unwrap entity_data from each entity; fall back to the entity itself if not wrapped.
+        entity-data-list (mapv #(get % "entity_data" %) entities)]
 
     ;; Validate required parameters
     (when-not entities
@@ -238,7 +241,7 @@
                :id-fields-count (count id-fields)})
 
     (try
-      (let [results (client/batch-validate entities
+      (let [results (client/batch-validate entity-data-list
                                            id-fields-list
                                            ruleset-name)
 
