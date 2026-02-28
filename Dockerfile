@@ -42,7 +42,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Install validation-lib directly from GitHub (pinned to specific SHA for reproducibility)
-RUN pip3 install --no-cache-dir git+https://github.com/judepayne/validation-lib.git@1f3b9ea
+RUN pip3 install --no-cache-dir git+https://github.com/judepayne/validation-lib.git@b31c69cc664d2fd57011f8dce836b3b936f9b0d7
 
 # Copy the built uberjar from builder stage
 COPY --from=builder /build/target/validation-service-0.1.0-SNAPSHOT-standalone.jar app.jar
